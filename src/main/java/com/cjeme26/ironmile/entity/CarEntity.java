@@ -34,7 +34,12 @@ public class CarEntity extends BoatEntity {
 			CarEntity.class,
 			TrackedDataHandlerRegistry.INTEGER
 	);
+	private static final TrackedData<Boolean> HEADLIGHTS_ON = DataTracker.registerData(
+			CarEntity.class,
+			TrackedDataHandlerRegistry.BOOLEAN
+	);
 	private static final String TIRE_NBT_KEY = "IronMileTireType";
+	private static final String HEADLIGHTS_NBT_KEY = "IronMileHeadlightsOn";
 
 	// Horizontal speeds are measured in blocks per game tick.
 	public static final double MAX_FORWARD_SPEED = 1.95;
@@ -99,12 +104,14 @@ public class CarEntity extends BoatEntity {
 	protected void initDataTracker(DataTracker.Builder builder) {
 		super.initDataTracker(builder);
 		builder.add(TIRE_TYPE, TireType.ALL_SEASON.ordinal());
+		builder.add(HEADLIGHTS_ON, false);
 	}
 
 	@Override
 	protected void writeCustomDataToNbt(NbtCompound nbt) {
 		super.writeCustomDataToNbt(nbt);
 		nbt.putInt(TIRE_NBT_KEY, this.getTireType().ordinal());
+		nbt.putBoolean(HEADLIGHTS_NBT_KEY, this.areHeadlightsOn());
 	}
 
 	@Override
@@ -112,6 +119,9 @@ public class CarEntity extends BoatEntity {
 		super.readCustomDataFromNbt(nbt);
 		if (nbt.contains(TIRE_NBT_KEY)) {
 			this.setTireType(TireType.fromOrdinal(nbt.getInt(TIRE_NBT_KEY)));
+		}
+		if (nbt.contains(HEADLIGHTS_NBT_KEY)) {
+			this.setHeadlightsOn(nbt.getBoolean(HEADLIGHTS_NBT_KEY));
 		}
 	}
 
@@ -564,6 +574,19 @@ public class CarEntity extends BoatEntity {
 
 	public boolean isReverseEngaged() {
 		return this.reverseEngaged;
+	}
+
+	public boolean isBrakeInputActive() {
+		return (this.lastForwardSpeed > 0.03 && this.pressingBack)
+				|| (this.lastForwardSpeed < -0.03 && this.pressingForward);
+	}
+
+	public boolean areHeadlightsOn() {
+		return this.dataTracker.get(HEADLIGHTS_ON);
+	}
+
+	public void setHeadlightsOn(boolean headlightsOn) {
+		this.dataTracker.set(HEADLIGHTS_ON, headlightsOn);
 	}
 
 	public String getGearDisplay() {

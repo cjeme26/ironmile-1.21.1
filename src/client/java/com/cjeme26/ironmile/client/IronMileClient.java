@@ -3,20 +3,42 @@ package com.cjeme26.ironmile.client;
 import com.cjeme26.ironmile.client.render.CarEntityRenderer;
 import com.cjeme26.ironmile.client.sound.EngineSoundManager;
 import com.cjeme26.ironmile.entity.ModEntities;
+import com.cjeme26.ironmile.entity.CarEntity;
+import com.cjeme26.ironmile.network.HeadlightTogglePayload;
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.option.KeyBinding;
+import net.minecraft.client.util.InputUtil;
 import net.minecraft.text.Text;
+import org.lwjgl.glfw.GLFW;
 
 import java.util.Locale;
 
 public class IronMileClient implements ClientModInitializer {
+	private static KeyBinding toggleHeadlightsKey;
+
 	@Override
 	public void onInitializeClient() {
+		toggleHeadlightsKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+				"key.ironmile.toggle_headlights",
+				InputUtil.Type.KEYSYM,
+				GLFW.GLFW_KEY_H,
+				"key.category.ironmile"
+		));
 		EntityRendererRegistry.register(ModEntities.CAR, CarEntityRenderer::new);
 		ClientTickEvents.END_CLIENT_TICK.register(EngineSoundManager::tick);
+		ClientTickEvents.END_CLIENT_TICK.register(client -> {
+			while (toggleHeadlightsKey.wasPressed()) {
+				if (client.player != null && client.player.getVehicle() instanceof CarEntity car) {
+					ClientPlayNetworking.send(new HeadlightTogglePayload(car.getId()));
+				}
+			}
+		});
 		HudRenderCallback.EVENT.register((drawContext, tickCounter) -> {
 			MinecraftClient client = MinecraftClient.getInstance();
 			if (client.player != null && client.player.getVehicle() instanceof com.cjeme26.ironmile.entity.CarEntity car) {
@@ -49,6 +71,13 @@ public class IronMileClient implements ClientModInitializer {
 						10,
 						58,
 						0xB8D8FF
+				);
+				drawContext.drawTextWithShadow(
+						client.textRenderer,
+						Text.literal("Headlights: " + (car.areHeadlightsOn() ? "On" : "Off")),
+						10,
+						70,
+						car.areHeadlightsOn() ? 0xFFF2B2 : 0x888888
 				);
 			}
 		});

@@ -1,5 +1,15 @@
 # Iron Mile
 
+## Milestone 9: visual vehicle lighting
+
+- H toggles two front headlights through a server-validated network payload.
+- Headlight state is tracked, synchronized, saved with the car, restored after
+  world reload, and displayed on the driving HUD.
+- Rear brake lamps brighten automatically during active braking.
+- White reversing lamps activate when reverse is engaged.
+- Lamps follow suspension pitch and roll as parts of the rendered body.
+- This milestone is visual only and does not yet cast light onto blocks.
+
 ## Milestone 8.3: audible idle and smoother RPM transitions
 
 - The source loop moves into an audible low-frequency range at idle and no

@@ -1,20 +1,26 @@
-IRON MILE — MILESTONE 8.3
+IRON MILE — MILESTONE 9
 
 Install from the root of your ironmile-1.21.1 project:
 
-  ditto "$HOME/Downloads/milestone8-3-update" .
+  ditto "$HOME/Downloads/milestone9-update" .
   ./gradlew clean runClient
 
-1. Enter a stationary car and confirm idle is immediately audible as a rumble.
-2. Let it idle for 15-20 seconds and listen for pulsing or flutter.
-3. Accelerate and decelerate repeatedly through 10-100 km/h.
-4. Listen carefully during each Gear: N shift moment.
-5. Compare first- and third-person sound while riding.
-6. Confirm throttle, reverse, distance, and dismount fades still work.
+Use third-person view and test in daylight first:
 
-Please report idle and driving separately. For each, note volume, pitch, rumble,
-and whether any broken-microphone/compressed-wind artifact remains.
+1. Enter the car and press H. The two FRONT lamps and HUD should switch On.
+2. Press H again. The front lamps and HUD should switch Off.
+3. Turn headlights on, leave/re-enter the world, and confirm they remain on.
+4. Drive forward, then hold S to brake. Both red REAR lamps should brighten.
+5. Release S after stopping. Brake lamps should return to dark red.
+6. Reverse. The two small white REAR lamps should brighten.
+7. Drive and brake in reverse with W; check both lamp types behave sensibly.
+8. Confirm all lamps stay attached through pitch, roll, slabs, and turns.
+9. Check Controls -> Key Binds -> Iron Mile -> Toggle Headlights.
+10. Confirm engine audio and all driving behaviour remain unchanged.
+
+The headlights do not illuminate terrain yet. Report if front/rear are swapped,
+if H does nothing, if a lamp stays active incorrectly, or if placement is poor.
 
 Suggested commit message:
 
-  Refine idle and RPM audio transitions
+  Add synchronized visual vehicle lights

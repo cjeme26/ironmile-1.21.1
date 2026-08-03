@@ -2,6 +2,7 @@ package com.cjeme26.ironmile.client.render;
 
 import com.cjeme26.ironmile.entity.CarEntity;
 import net.minecraft.block.Blocks;
+import net.minecraft.block.BlockState;
 import net.minecraft.client.render.OverlayTexture;
 import net.minecraft.client.render.VertexConsumerProvider;
 import net.minecraft.client.render.block.BlockRenderManager;
@@ -54,17 +55,54 @@ public class CarEntityRenderer extends EntityRenderer<CarEntity> {
 		matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(180.0F - yaw));
 		matrices.multiply(RotationAxis.POSITIVE_X.rotationDegrees(suspension.pitch));
 		matrices.multiply(RotationAxis.POSITIVE_Z.rotationDegrees(suspension.roll));
-		matrices.scale(1.75F, 0.65F, 2.8F);
+
+		this.renderBlockPart(Blocks.IRON_BLOCK.getDefaultState(), matrices, vertexConsumers, light, 0.0, 0.0, 0.0, 1.75F, 0.65F, 2.8F);
+
+		BlockState headlight = car.areHeadlightsOn()
+				? Blocks.SEA_LANTERN.getDefaultState()
+				: Blocks.LIGHT_GRAY_CONCRETE.getDefaultState();
+		BlockState brakeLight = car.isBrakeInputActive()
+				? Blocks.REDSTONE_BLOCK.getDefaultState()
+				: Blocks.RED_CONCRETE.getDefaultState();
+		BlockState reverseLight = car.isReverseEngaged()
+				? Blocks.SEA_LANTERN.getDefaultState()
+				: Blocks.GRAY_CONCRETE.getDefaultState();
+
+		// Local -Z is the front; local +Z is the rear.
+		this.renderBlockPart(headlight, matrices, vertexConsumers, light, -0.55, 0.0, -1.43, 0.34F, 0.22F, 0.10F);
+		this.renderBlockPart(headlight, matrices, vertexConsumers, light, 0.55, 0.0, -1.43, 0.34F, 0.22F, 0.10F);
+		this.renderBlockPart(brakeLight, matrices, vertexConsumers, light, -0.58, 0.0, 1.43, 0.30F, 0.22F, 0.10F);
+		this.renderBlockPart(brakeLight, matrices, vertexConsumers, light, 0.58, 0.0, 1.43, 0.30F, 0.22F, 0.10F);
+		this.renderBlockPart(reverseLight, matrices, vertexConsumers, light, -0.22, 0.0, 1.43, 0.18F, 0.18F, 0.105F);
+		this.renderBlockPart(reverseLight, matrices, vertexConsumers, light, 0.22, 0.0, 1.43, 0.18F, 0.18F, 0.105F);
+		matrices.pop();
+		super.render(car, yaw, tickDelta, matrices, vertexConsumers, light);
+	}
+
+	private void renderBlockPart(
+			BlockState state,
+			MatrixStack matrices,
+			VertexConsumerProvider vertexConsumers,
+			int light,
+			double x,
+			double y,
+			double z,
+			float scaleX,
+			float scaleY,
+			float scaleZ
+	) {
+		matrices.push();
+		matrices.translate(x, y, z);
+		matrices.scale(scaleX, scaleY, scaleZ);
 		matrices.translate(-0.5, -0.5, -0.5);
-		blockRenderManager.renderBlockAsEntity(
-				Blocks.IRON_BLOCK.getDefaultState(),
+		this.blockRenderManager.renderBlockAsEntity(
+				state,
 				matrices,
 				vertexConsumers,
 				light,
 				OverlayTexture.DEFAULT_UV
 		);
 		matrices.pop();
-		super.render(car, yaw, tickDelta, matrices, vertexConsumers, light);
 	}
 
 	private SuspensionState updateSuspension(CarEntity car) {

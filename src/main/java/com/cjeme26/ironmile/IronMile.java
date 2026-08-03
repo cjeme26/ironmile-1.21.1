@@ -5,6 +5,10 @@ import net.fabricmc.api.ModInitializer;
 import com.cjeme26.ironmile.entity.ModEntities;
 import com.cjeme26.ironmile.item.ModItems;
 import com.cjeme26.ironmile.sound.ModSounds;
+import com.cjeme26.ironmile.network.HeadlightTogglePayload;
+
+import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 
 import net.minecraft.util.Identifier;
 
@@ -24,6 +28,14 @@ public class IronMile implements ModInitializer {
 		ModEntities.initialize();
 		ModItems.initialize();
 		ModSounds.initialize();
+		PayloadTypeRegistry.playC2S().register(HeadlightTogglePayload.ID, HeadlightTogglePayload.CODEC);
+		ServerPlayNetworking.registerGlobalReceiver(HeadlightTogglePayload.ID, (payload, context) -> {
+			var entity = context.player().getWorld().getEntityById(payload.entityId());
+			if (entity instanceof com.cjeme26.ironmile.entity.CarEntity car
+					&& car.getControllingPassenger() == context.player()) {
+				car.setHeadlightsOn(!car.areHeadlightsOn());
+			}
+		});
 		LOGGER.info("Iron Mile prototype initialized");
 	}
 
