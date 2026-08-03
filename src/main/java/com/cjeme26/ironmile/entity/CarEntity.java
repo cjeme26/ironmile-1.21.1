@@ -41,9 +41,9 @@ public class CarEntity extends BoatEntity {
 	public static final double ROLLING_RESISTANCE = 0.992;
 	public static final double LATERAL_VELOCITY_RETAINED = 0.42;
 	public static final float MAX_STEERING_PER_TICK = 2.6F;
-	private static final double[] GEAR_RATIOS = {0.0, 3.50, 2.10, 1.45, 1.10, 0.85, 0.68};
+	private static final double[] GEAR_RATIOS = {0.0, 3.80, 2.40, 1.65, 1.25, 0.95, 0.72};
 	private static final double REVERSE_RATIO = 3.20;
-	private static final double FINAL_DRIVE_RATIO = 3.70;
+	private static final double FINAL_DRIVE_RATIO = 4.00;
 	private static final double WHEEL_RADIUS_METRES = 0.34;
 	private static final double VEHICLE_MASS_KG = 1500.0;
 	private static final double DRIVETRAIN_EFFICIENCY = 0.86;
@@ -198,7 +198,7 @@ public class CarEntity extends BoatEntity {
 
 		if (this.pressingForward && !this.pressingBack) {
 			if (speed < -0.03) {
-				speed = Math.min(0.0, speed + BRAKE_FORCE * grip);
+				speed = Math.min(0.0, speed + this.getBrakeForce(speed, grip));
 				this.reverseEngaged = speed < 0.0;
 			} else if (!shifting) {
 				this.reverseEngaged = false;
@@ -206,7 +206,7 @@ public class CarEntity extends BoatEntity {
 			}
 		} else if (this.pressingBack && !this.pressingForward) {
 			if (speed > 0.03) {
-				speed = Math.max(0.0, speed - BRAKE_FORCE * grip);
+				speed = Math.max(0.0, speed - this.getBrakeForce(speed, grip));
 				this.reverseEngaged = false;
 			} else if (!shifting) {
 				this.reverseEngaged = true;
@@ -294,18 +294,25 @@ public class CarEntity extends BoatEntity {
 
 	private double getEngineTorqueNm(double rpm) {
 		if (rpm < 1200.0) {
-			return this.lerp(160.0, 220.0, (rpm - IDLE_RPM) / 400.0);
+			return this.lerp(240.0, 330.0, (rpm - IDLE_RPM) / 400.0);
 		}
 		if (rpm < 2500.0) {
-			return this.lerp(220.0, 290.0, (rpm - 1200.0) / 1300.0);
+			return this.lerp(330.0, 435.0, (rpm - 1200.0) / 1300.0);
 		}
 		if (rpm < 4500.0) {
-			return this.lerp(290.0, 300.0, (rpm - 2500.0) / 2000.0);
+			return this.lerp(435.0, 450.0, (rpm - 2500.0) / 2000.0);
 		}
 		if (rpm < REDLINE_RPM) {
-			return this.lerp(300.0, 210.0, (rpm - 4500.0) / 2000.0);
+			return this.lerp(450.0, 315.0, (rpm - 4500.0) / 2000.0);
 		}
-		return 180.0;
+		return 270.0;
+	}
+
+	private double getBrakeForce(double speed, double grip) {
+		double speedKmh = Math.abs(speed) * 72.0;
+		double lowSpeedAmount = 1.0 - MathHelper.clamp(speedKmh / 35.0, 0.0, 1.0);
+		double lowSpeedBoost = 1.0 + 0.75 * lowSpeedAmount;
+		return BRAKE_FORCE * grip * lowSpeedBoost;
 	}
 
 	private double lerp(double start, double end, double amount) {
