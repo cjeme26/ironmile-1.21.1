@@ -1,0 +1,25 @@
+IRON MILE — COMPLETE MILESTONE 2 RECOVERY
+
+This package contains the complete Iron Mile source/resource tree. It restores
+the milestone-one files missing from the local repository and includes the
+milestone-two movement changes.
+
+1. Quit the development Minecraft client.
+2. Extract this ZIP into Downloads.
+3. In VS Code, make sure the terminal is at the root of ironmile-1.21.1.
+4. Run:
+
+      ditto "$HOME/Downloads/milestone2-recovery" .
+
+5. Then run:
+
+      ./gradlew clean runClient
+
+The clean step removes stale compiled output before rebuilding.
+
+Do not delete or replace the existing project folder. ditto merges these files
+into it and leaves the hidden .git repository intact.
+
+After Minecraft launches, place a fresh car with `/give @s ironmile:car` and
+test acceleration, coasting, braking/reverse, steering, lateral grip, the speed
+HUD, and the absence of paddle sounds.

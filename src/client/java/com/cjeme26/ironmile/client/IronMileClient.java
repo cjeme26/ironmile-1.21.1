@@ -3,11 +3,23 @@ package com.cjeme26.ironmile.client;
 import com.cjeme26.ironmile.client.render.CarEntityRenderer;
 import com.cjeme26.ironmile.entity.ModEntities;
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.text.Text;
+
+import java.util.Locale;
 
 public class IronMileClient implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
 		EntityRendererRegistry.register(ModEntities.CAR, CarEntityRenderer::new);
+		HudRenderCallback.EVENT.register((drawContext, tickCounter) -> {
+			MinecraftClient client = MinecraftClient.getInstance();
+			if (client.player != null && client.player.getVehicle() instanceof com.cjeme26.ironmile.entity.CarEntity car) {
+				String speed = String.format(Locale.ROOT, "Iron Mile  |  %.0f km/h", car.getHorizontalSpeedKmh());
+				drawContext.drawTextWithShadow(client.textRenderer, Text.literal(speed), 10, 10, 0xFFFFFF);
+			}
+		});
 	}
 }
