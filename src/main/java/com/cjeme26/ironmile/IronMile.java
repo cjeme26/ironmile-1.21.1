@@ -4,6 +4,7 @@ import net.fabricmc.api.ModInitializer;
 
 import com.cjeme26.ironmile.entity.ModEntities;
 import com.cjeme26.ironmile.item.ModItems;
+import com.cjeme26.ironmile.sound.ModSounds;
 
 import net.minecraft.util.Identifier;
 
@@ -22,6 +23,7 @@ public class IronMile implements ModInitializer {
 	public void onInitialize() {
 		ModEntities.initialize();
 		ModItems.initialize();
+		ModSounds.initialize();
 		LOGGER.info("Iron Mile prototype initialized");
 	}
 

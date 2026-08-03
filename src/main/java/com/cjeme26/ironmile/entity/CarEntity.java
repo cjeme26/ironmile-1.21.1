@@ -554,6 +554,18 @@ public class CarEntity extends BoatEntity {
 		return (int) Math.round(this.engineRpm / 50.0) * 50;
 	}
 
+	public boolean hasThrottleInput() {
+		return this.pressingForward || this.pressingBack;
+	}
+
+	public boolean isChangingGear() {
+		return this.shiftTicksRemaining > 0;
+	}
+
+	public boolean isReverseEngaged() {
+		return this.reverseEngaged;
+	}
+
 	public String getGearDisplay() {
 		if (this.shiftTicksRemaining > 0) {
 			return "N";

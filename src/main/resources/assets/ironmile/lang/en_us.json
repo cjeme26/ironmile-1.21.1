@@ -1,7 +1,3 @@
 {
-  "item.ironmile.car": "Iron Mile Prototype Car",
-  "entity.ironmile.car": "Iron Mile Prototype Car",
-  "item.ironmile.summer_tires": "Summer Tires",
-  "item.ironmile.all_season_tires": "All-Season Tires",
-  "item.ironmile.winter_tires": "Winter Tires"
+  "subtitles.ironmile.engine": "Engine running"
 }

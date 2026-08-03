@@ -1,0 +1,11 @@
+{
+  "engine_loop": {
+    "subtitle": "subtitles.ironmile.engine",
+    "sounds": [
+      {
+        "name": "ironmile:engine/engine_loop",
+        "stream": false
+      }
+    ]
+  }
+}

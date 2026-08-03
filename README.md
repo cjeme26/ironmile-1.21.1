@@ -1,5 +1,38 @@
 # Iron Mile
 
+## Milestone 8.3: audible idle and smoother RPM transitions
+
+- The source loop moves into an audible low-frequency range at idle and no
+  longer uses amplitude modulation that could resemble microphone flutter.
+- Idle and overall volume are restored while throttle remains distinct.
+- RPM pitch changes are slower and narrower, and automatic shift dips are
+  gentler to reduce occasional resampling chatter during acceleration/coasting.
+
+## Milestone 8.2: stable in-car engine audio
+
+- The driver's engine sound is listener-relative while riding, eliminating
+  positional timing jitter between the moving camera and moving sound source.
+- Cars heard by other players remain spatial sounds attached to their world
+  positions and still fade naturally with distance.
+- RPM pitch, throttle volume, shift dips, reverse tone, and fades are unchanged.
+
+## Milestone 8.1: smoother high-RPM engine tone
+
+- The synthetic source loop now emphasizes its low fundamental and uses fewer,
+  quieter upper harmonics.
+- Maximum pitch is reduced while retaining a clear rise from idle to redline.
+- Spatial audio, throttle volume, shift dips, reverse tone, and fades are
+  unchanged from Milestone 8.
+
+## Milestone 8: RPM-based engine audio
+
+- Occupied cars emit a spatial looping engine sound audible within 48 blocks.
+- Pitch follows engine RPM smoothly, with distinct idle and redline character.
+- Throttle increases volume; automatic shifts briefly dip pitch and volume;
+  reverse has a slightly lower tone.
+- Sounds follow moving cars and fade in and out without abrupt clicks.
+- The included engine loop is an original synthetic Iron Mile placeholder.
+
 ## Milestone 7.4: short-drop road adhesion
 
 - Before each collision section, five points beneath the physical car search

@@ -1,29 +1,20 @@
-IRON MILE — MILESTONE 7.4
+IRON MILE — MILESTONE 8.3
 
 Install from the root of your ironmile-1.21.1 project:
 
-  ditto "$HOME/Downloads/milestone7-4-update" .
+  ditto "$HOME/Downloads/milestone8-3-update" .
   ./gradlew clean runClient
 
-Keep this uncommitted until all gap lengths are checked.
+1. Enter a stationary car and confirm idle is immediately audible as a rumble.
+2. Let it idle for 15-20 seconds and listen for pulsing or flutter.
+3. Accelerate and decelerate repeatedly through 10-100 km/h.
+4. Listen carefully during each Gear: N shift moment.
+5. Compare first- and third-person sound while riding.
+6. Confirm throttle, reverse, distance, and dismount fades still work.
 
-Use four-block-wide bottom-slab platforms on top of ground level. Test:
-
-  ----__----
-  ----___----
-  ----____----
-  ----_____----
-  ----______----
-
-1. Cross every pattern at 40, 60, 70, and 90 km/h while holding W.
-2. Watch the HUD for sudden speed loss and the body for an airborne hop.
-3. Test the centre and corner of the four-block-wide course.
-4. Confirm a drop deeper than one slab still behaves like a real fall.
-5. Confirm a ground-to-full-block wall still stops the car.
-6. Recheck normal flat-road handling and suspension.
-
-Report which exact gap and speed combinations fail, if any.
+Please report idle and driving separately. For each, note volume, pitch, rumble,
+and whether any broken-microphone/compressed-wind artifact remains.
 
 Suggested commit message:
 
-  Keep cars settled across short road drops
+  Refine idle and RPM audio transitions

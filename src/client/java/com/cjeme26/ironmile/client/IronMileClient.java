@@ -1,10 +1,12 @@
 package com.cjeme26.ironmile.client;
 
 import com.cjeme26.ironmile.client.render.CarEntityRenderer;
+import com.cjeme26.ironmile.client.sound.EngineSoundManager;
 import com.cjeme26.ironmile.entity.ModEntities;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.text.Text;
 
@@ -14,6 +16,7 @@ public class IronMileClient implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
 		EntityRendererRegistry.register(ModEntities.CAR, CarEntityRenderer::new);
+		ClientTickEvents.END_CLIENT_TICK.register(EngineSoundManager::tick);
 		HudRenderCallback.EVENT.register((drawContext, tickCounter) -> {
 			MinecraftClient client = MinecraftClient.getInstance();
 			if (client.player != null && client.player.getVehicle() instanceof com.cjeme26.ironmile.entity.CarEntity car) {
