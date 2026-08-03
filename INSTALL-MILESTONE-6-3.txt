@@ -1,0 +1,38 @@
+IRON MILE — MILESTONE 6.3 GROUND-CONTACT CORRECTION
+
+Install this over milestone 6.2. Existing Git commits do not need rewriting.
+
+1. Quit the development Minecraft client.
+2. Extract this ZIP into Downloads.
+3. In VS Code, make sure the terminal is at the root of ironmile-1.21.1.
+4. Run:
+
+      ditto "$HOME/Downloads/milestone6-3-update" .
+      ./gradlew clean runClient
+
+CORRECTION
+
+The vehicle previously used exactly zero vertical velocity while grounded.
+Minecraft could therefore alternate the car between grounded and airborne
+states. Because drivetrain force is only applied with tire contact, this could
+roughly halve the number of powered ticks.
+
+A small downward grounding force now keeps collision contact active on every
+flat-road tick. It does not increase engine torque or alter tire grip.
+
+CONTROLLED TEST
+
+- Use a newly spawned car.
+- Install summer tires.
+- Use `/weather clear`.
+- Drive on a long, flat stone or concrete road.
+- Confirm the HUD reads Road, 100% grip, Dry and Summer Tires.
+- Hold W continuously and time 0–100 km/h.
+- Also test driving over slabs, small height changes and road edges to make sure
+  the grounding force does not cause sticking or unusual movement.
+
+Expected 0–100 is approximately 9–11 seconds. If it remains much slower, report
+speed, gear and RPM after exactly 10 seconds.
+
+After successful testing, commit with:
+  Maintain continuous tire contact during acceleration

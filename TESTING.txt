@@ -1,0 +1,18 @@
+IRON MILE — MILESTONE 6.4
+
+Install from the root of your ironmile-1.21.1 project:
+
+  ditto "$HOME/Downloads/milestone6-4-update" .
+  ./gradlew clean runClient
+
+Test with a freshly spawned car on a flat road:
+
+1. Drive straight from a full block onto a bottom slab.
+2. Drive from the slab back onto a full block.
+3. Try the same transitions slowly and at moderate speed.
+4. Confirm that a full one-block wall still stops the car.
+5. Confirm that 0–100 km/h on flat stone remains about 9 seconds.
+
+Suggested commit message:
+
+  Allow cars to drive over slabs

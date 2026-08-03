@@ -1,5 +1,13 @@
 # Iron Mile
 
+## Milestone 6.4: slab clearance
+
+- Cars can step up 0.6 blocks, allowing them to drive onto slabs, paths, and
+  similarly low road edges.
+- Full blocks remain walls, so the car cannot unrealistically climb terrain.
+- Milestone 6.3 drivetrain, braking, steering, grip, and ground-contact tuning
+  are unchanged.
+
 An experimental Fabric vehicle mod for Minecraft 1.21.1.
 
 ## Prototype milestone 6
@@ -56,6 +64,12 @@ then limited by the existing tire, surface and weather grip calculation.
   roughly 9.5 seconds from 0–100 km/h on dry road with summer tires.
 - Base braking is about 17% stronger at every speed and assistance progressively
   increases below 35 km/h, reaching a 90% boost close to a stop.
+
+### Milestone 6.3 ground-contact correction
+
+- Added a small downward grounding force so Minecraft maintains tire contact on
+  consecutive ticks. Previously, zero vertical movement could alternate the car
+  between grounded and airborne states, roughly halving drivetrain updates.
 
 ## Development
 

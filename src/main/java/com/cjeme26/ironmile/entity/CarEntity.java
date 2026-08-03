@@ -57,6 +57,8 @@ public class CarEntity extends BoatEntity {
 	private static final double REV_LIMITER_RPM = 6700.0;
 	private static final int SHIFT_DURATION_TICKS = 6;
 	private static final double GRAVITY = 0.04;
+	private static final double GROUNDING_FORCE = 0.08;
+	private static final float STEP_HEIGHT = 0.6F;
 	private static final double STOP_EPSILON = 0.002;
 
 	private static final double WHEEL_FORWARD_OFFSET = 0.95;
@@ -77,6 +79,12 @@ public class CarEntity extends BoatEntity {
 
 	public CarEntity(EntityType<? extends BoatEntity> entityType, World world) {
 		super(entityType, world);
+	}
+
+	/** Lets the wheels roll onto slabs and similarly low road edges. */
+	@Override
+	public float getStepHeight() {
+		return STEP_HEIGHT;
 	}
 
 	@Override
@@ -182,7 +190,13 @@ public class CarEntity extends BoatEntity {
 
 		double horizontalX = forward.x * forwardSpeed + right.x * sidewaysSpeed;
 		double horizontalZ = forward.z * forwardSpeed + right.z * sidewaysSpeed;
-		double verticalSpeed = this.isOnGround() ? Math.max(velocity.y, 0.0) : velocity.y - GRAVITY;
+		/*
+		 * A small downward force keeps collision contact active every tick. With
+		 * exactly zero vertical movement, Minecraft can alternate between grounded
+		 * and airborne states, causing the drivetrain to apply power only every
+		 * other tick.
+		 */
+		double verticalSpeed = this.isOnGround() ? -GROUNDING_FORCE : velocity.y - GRAVITY;
 
 		this.setVelocity(horizontalX, verticalSpeed, horizontalZ);
 		this.move(MovementType.SELF, this.getVelocity());
