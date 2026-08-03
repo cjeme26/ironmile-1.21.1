@@ -28,9 +28,16 @@ public class IronMileClient implements ClientModInitializer {
 				drawContext.drawTextWithShadow(client.textRenderer, Text.literal(surface), 10, 22, 0xD7D7D7);
 				drawContext.drawTextWithShadow(
 						client.textRenderer,
-						Text.literal("Tires: " + car.getTireType().getDisplayName()),
+						Text.literal("Condition: " + car.getCurrentRoadConditionName()),
 						10,
 						34,
+						0xAFC7E8
+				);
+				drawContext.drawTextWithShadow(
+						client.textRenderer,
+						Text.literal("Tires: " + car.getTireType().getDisplayName()),
+						10,
+						46,
 						0xB8D8FF
 				);
 			}

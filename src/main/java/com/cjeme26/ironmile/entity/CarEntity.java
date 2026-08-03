@@ -55,6 +55,7 @@ public class CarEntity extends BoatEntity {
 	private boolean pressingBack;
 	private double currentGrip = 1.0;
 	private String currentSurfaceName = "Road";
+	private String currentRoadConditionName = "Dry";
 
 	public CarEntity(EntityType<? extends BoatEntity> entityType, World world) {
 		super(entityType, world);
@@ -207,23 +208,31 @@ public class CarEntity extends BoatEntity {
 	}
 
 	private void sampleWheelGrip(Vec3d forward, Vec3d right) {
-		RoadSurface frontLeft = this.getSurfaceAtWheel(forward, right, WHEEL_FORWARD_OFFSET, -WHEEL_SIDE_OFFSET);
-		RoadSurface frontRight = this.getSurfaceAtWheel(forward, right, WHEEL_FORWARD_OFFSET, WHEEL_SIDE_OFFSET);
-		RoadSurface rearLeft = this.getSurfaceAtWheel(forward, right, -WHEEL_FORWARD_OFFSET, -WHEEL_SIDE_OFFSET);
-		RoadSurface rearRight = this.getSurfaceAtWheel(forward, right, -WHEEL_FORWARD_OFFSET, WHEEL_SIDE_OFFSET);
+		WheelSample frontLeft = this.getSurfaceAtWheel(forward, right, WHEEL_FORWARD_OFFSET, -WHEEL_SIDE_OFFSET);
+		WheelSample frontRight = this.getSurfaceAtWheel(forward, right, WHEEL_FORWARD_OFFSET, WHEEL_SIDE_OFFSET);
+		WheelSample rearLeft = this.getSurfaceAtWheel(forward, right, -WHEEL_FORWARD_OFFSET, -WHEEL_SIDE_OFFSET);
+		WheelSample rearRight = this.getSurfaceAtWheel(forward, right, -WHEEL_FORWARD_OFFSET, WHEEL_SIDE_OFFSET);
 
 		TireType tires = this.getTireType();
 		this.currentGrip = (
-				frontLeft.getGrip(tires)
-						+ frontRight.getGrip(tires)
-						+ rearLeft.getGrip(tires)
-						+ rearRight.getGrip(tires)
+				frontLeft.surface.getGrip(tires, frontLeft.wet)
+						+ frontRight.surface.getGrip(tires, frontRight.wet)
+						+ rearLeft.surface.getGrip(tires, rearLeft.wet)
+						+ rearRight.surface.getGrip(tires, rearRight.wet)
 		) / 4.0;
-		boolean mixed = frontLeft != frontRight || frontLeft != rearLeft || frontLeft != rearRight;
-		this.currentSurfaceName = mixed ? "Mixed" : frontLeft.displayName;
+		boolean mixedSurface = frontLeft.surface != frontRight.surface
+				|| frontLeft.surface != rearLeft.surface
+				|| frontLeft.surface != rearRight.surface;
+		this.currentSurfaceName = mixedSurface ? "Mixed" : frontLeft.surface.displayName;
+
+		int wetWheels = (frontLeft.wet ? 1 : 0)
+				+ (frontRight.wet ? 1 : 0)
+				+ (rearLeft.wet ? 1 : 0)
+				+ (rearRight.wet ? 1 : 0);
+		this.currentRoadConditionName = wetWheels == 0 ? "Dry" : wetWheels == 4 ? "Wet" : "Mixed";
 	}
 
-	private RoadSurface getSurfaceAtWheel(Vec3d forward, Vec3d right, double forwardOffset, double sideOffset) {
+	private WheelSample getSurfaceAtWheel(Vec3d forward, Vec3d right, double forwardOffset, double sideOffset) {
 		double x = this.getX() + forward.x * forwardOffset + right.x * sideOffset;
 		double z = this.getZ() + forward.z * forwardOffset + right.z * sideOffset;
 		double wheelY = this.getBoundingBox().minY - 0.05;
@@ -231,10 +240,12 @@ public class CarEntity extends BoatEntity {
 		BlockState state = this.getWorld().getBlockState(pos);
 
 		if (state.isAir()) {
-			state = this.getWorld().getBlockState(pos.down());
+			pos = pos.down();
+			state = this.getWorld().getBlockState(pos);
 		}
 
-		return RoadSurface.from(state);
+		boolean wet = this.getWorld().hasRain(pos.up());
+		return new WheelSample(RoadSurface.from(state), wet);
 	}
 
 	private double getLateralVelocityRetained() {
@@ -252,6 +263,10 @@ public class CarEntity extends BoatEntity {
 
 	public String getCurrentSurfaceName() {
 		return this.currentSurfaceName;
+	}
+
+	public String getCurrentRoadConditionName() {
+		return this.currentRoadConditionName;
 	}
 
 	public TireType getTireType() {
@@ -283,6 +298,9 @@ public class CarEntity extends BoatEntity {
 		}
 	}
 
+	private record WheelSample(RoadSurface surface, boolean wet) {
+	}
+
 	private enum RoadSurface {
 		//                          Summer  All-season  Winter
 		ROAD("Road",                 1.00,       0.90,   0.82),
@@ -306,12 +324,31 @@ public class CarEntity extends BoatEntity {
 			this.winterGrip = winterGrip;
 		}
 
-		private double getGrip(TireType tireType) {
-			return switch (tireType) {
+		private double getGrip(TireType tireType, boolean wet) {
+			double dryGrip = switch (tireType) {
 				case SUMMER -> this.summerGrip;
 				case ALL_SEASON -> this.allSeasonGrip;
 				case WINTER -> this.winterGrip;
 			};
+			if (!wet) {
+				return dryGrip;
+			}
+
+			// Wet-road values are absolute so each tire has a distinct compromise.
+			if (this == ROAD) {
+				return switch (tireType) {
+					case SUMMER -> 0.76;
+					case ALL_SEASON -> 0.78;
+					case WINTER -> 0.68;
+				};
+			}
+
+			double wetMultiplier = switch (tireType) {
+				case SUMMER -> 0.84;
+				case ALL_SEASON -> 0.88;
+				case WINTER -> 0.83;
+			};
+			return dryGrip * wetMultiplier;
 		}
 
 		private static RoadSurface from(BlockState state) {
