@@ -37,7 +37,7 @@ public class CarEntity extends BoatEntity {
 	// Horizontal speeds are measured in blocks per game tick.
 	public static final double MAX_FORWARD_SPEED = 1.95;
 	public static final double MAX_REVERSE_SPEED = 0.35;
-	public static final double BRAKE_FORCE = 0.018;
+	public static final double BRAKE_FORCE = 0.021;
 	public static final double ROLLING_RESISTANCE = 0.992;
 	public static final double LATERAL_VELOCITY_RETAINED = 0.42;
 	public static final float MAX_STEERING_PER_TICK = 2.6F;
@@ -281,7 +281,8 @@ public class CarEntity extends BoatEntity {
 		}
 
 		double torqueNm = this.getEngineTorqueNm(coupledRpm);
-		double wheelForceNewtons = torqueNm * ratio * FINAL_DRIVE_RATIO * DRIVETRAIN_EFFICIENCY;
+		double wheelTorqueNm = torqueNm * ratio * FINAL_DRIVE_RATIO * DRIVETRAIN_EFFICIENCY;
+		double wheelForceNewtons = wheelTorqueNm / WHEEL_RADIUS_METRES;
 		double accelerationMetresPerSecondSquared = wheelForceNewtons / VEHICLE_MASS_KG;
 		return accelerationMetresPerSecondSquared / 400.0 * grip;
 	}
@@ -294,24 +295,24 @@ public class CarEntity extends BoatEntity {
 
 	private double getEngineTorqueNm(double rpm) {
 		if (rpm < 1200.0) {
-			return this.lerp(240.0, 330.0, (rpm - IDLE_RPM) / 400.0);
+			return this.lerp(112.0, 154.0, (rpm - IDLE_RPM) / 400.0);
 		}
 		if (rpm < 2500.0) {
-			return this.lerp(330.0, 435.0, (rpm - 1200.0) / 1300.0);
+			return this.lerp(154.0, 203.0, (rpm - 1200.0) / 1300.0);
 		}
 		if (rpm < 4500.0) {
-			return this.lerp(435.0, 450.0, (rpm - 2500.0) / 2000.0);
+			return this.lerp(203.0, 210.0, (rpm - 2500.0) / 2000.0);
 		}
 		if (rpm < REDLINE_RPM) {
-			return this.lerp(450.0, 315.0, (rpm - 4500.0) / 2000.0);
+			return this.lerp(210.0, 147.0, (rpm - 4500.0) / 2000.0);
 		}
-		return 270.0;
+		return 126.0;
 	}
 
 	private double getBrakeForce(double speed, double grip) {
 		double speedKmh = Math.abs(speed) * 72.0;
 		double lowSpeedAmount = 1.0 - MathHelper.clamp(speedKmh / 35.0, 0.0, 1.0);
-		double lowSpeedBoost = 1.0 + 0.75 * lowSpeedAmount;
+		double lowSpeedBoost = 1.0 + 0.90 * lowSpeedAmount;
 		return BRAKE_FORCE * grip * lowSpeedBoost;
 	}
 

@@ -24,7 +24,7 @@ An experimental Fabric vehicle mod for Minecraft 1.21.1.
 - Roofed roads and tunnels stay dry; partial shelter produces mixed conditions.
 - Wet grip differs by tire type and is blended across all four wheels.
 - The HUD displays Dry, Wet or Mixed road condition.
-- A 450 Nm engine now uses an RPM-dependent torque curve.
+- A 210 Nm engine now uses an RPM-dependent torque curve.
 - A six-speed automatic gearbox shifts up, down and performs kickdown.
 - Reverse has its own ratio, and S remains the brake until the car stops.
 - Shifts briefly interrupt drive force and show N in the development HUD.
@@ -47,13 +47,15 @@ The drivetrain targets a heavy road car rather than a sports car. Engine force
 is converted through the active gear and final drive, divided by vehicle mass,
 then limited by the existing tire, surface and weather grip calculation.
 
-### Milestone 6.1 tuning
+### Milestone 6.2 tuning
 
 - Closer ratios and a shorter final drive target shifts near 49, 78 and 113 km/h.
-- Peak torque increased from 300 Nm to 450 Nm, targeting roughly 13 seconds
-  from 0–100 km/h on dry road with summer tires.
-- Braking is unchanged above 35 km/h but progressively strengthens below that
-  speed, reaching its highest assistance close to a stop.
+- Corrected wheel force to divide wheel torque by wheel radius. This missing
+  conversion was the reason unrealistically large engine torque still felt slow.
+- Retuned to a believable 210 Nm, 1,500 kg everyday automatic car, targeting
+  roughly 9.5 seconds from 0–100 km/h on dry road with summer tires.
+- Base braking is about 17% stronger at every speed and assistance progressively
+  increases below 35 km/h, reaching a 90% boost close to a stop.
 
 ## Development
 
