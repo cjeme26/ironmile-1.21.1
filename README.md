@@ -2,7 +2,7 @@
 
 An experimental Fabric vehicle mod for Minecraft 1.21.1.
 
-## Prototype milestone 3
+## Prototype milestone 4
 
 - The prototype vehicle appears as a long iron box.
 - Find **Iron Mile Prototype Car** in the Tools & Utilities creative tab, or use
@@ -16,12 +16,18 @@ An experimental Fabric vehicle mod for Minecraft 1.21.1.
 - Four virtual wheel points sample the blocks beneath the vehicle.
 - Gravel, dirt, mud, sand, snow, ice and blue ice have different grip.
 - The HUD temporarily displays the detected surface and blended grip.
+- Cars spawn with all-season tires.
+- Hold summer, all-season or winter tires and right-click a car to install them.
+- Tire items are reusable during testing, and each car saves its fitted tires.
+- The HUD displays the fitted tire type.
 
 The car still temporarily inherits Minecraft's boat passenger/input plumbing,
 but the controlling player's acceleration, braking, steering, rolling
 resistance and lateral grip are now calculated by Iron Mile. Paddle movement
 and sound are disabled. Surface grip now limits acceleration, braking and
 steering while controlling how much sideways velocity the tires retain.
+Summer tires favor dry roads, winter tires favor snow and ice, and all-seasons
+provide a compromise.
 
 ## Development
 

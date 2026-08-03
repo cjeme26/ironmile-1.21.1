@@ -1,10 +1,20 @@
 package com.cjeme26.ironmile.entity;
 
+import com.cjeme26.ironmile.item.TireItem;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.MovementType;
+import net.minecraft.entity.data.DataTracker;
+import net.minecraft.entity.data.TrackedData;
+import net.minecraft.entity.data.TrackedDataHandlerRegistry;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.vehicle.BoatEntity;
+import net.minecraft.item.ItemStack;
+import net.minecraft.nbt.NbtCompound;
+import net.minecraft.text.Text;
+import net.minecraft.util.ActionResult;
+import net.minecraft.util.Hand;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
@@ -18,6 +28,12 @@ import net.minecraft.world.World;
  * here. These constants are deliberately easy to tune after driving tests.</p>
  */
 public class CarEntity extends BoatEntity {
+	private static final TrackedData<Integer> TIRE_TYPE = DataTracker.registerData(
+			CarEntity.class,
+			TrackedDataHandlerRegistry.INTEGER
+	);
+	private static final String TIRE_NBT_KEY = "IronMileTireType";
+
 	// Horizontal speeds are measured in blocks per game tick.
 	public static final double MAX_FORWARD_SPEED = 0.75;
 	public static final double MAX_REVERSE_SPEED = 0.25;
@@ -42,6 +58,39 @@ public class CarEntity extends BoatEntity {
 
 	public CarEntity(EntityType<? extends BoatEntity> entityType, World world) {
 		super(entityType, world);
+	}
+
+	@Override
+	protected void initDataTracker(DataTracker.Builder builder) {
+		super.initDataTracker(builder);
+		builder.add(TIRE_TYPE, TireType.ALL_SEASON.ordinal());
+	}
+
+	@Override
+	protected void writeCustomDataToNbt(NbtCompound nbt) {
+		super.writeCustomDataToNbt(nbt);
+		nbt.putInt(TIRE_NBT_KEY, this.getTireType().ordinal());
+	}
+
+	@Override
+	protected void readCustomDataFromNbt(NbtCompound nbt) {
+		super.readCustomDataFromNbt(nbt);
+		if (nbt.contains(TIRE_NBT_KEY)) {
+			this.setTireType(TireType.fromOrdinal(nbt.getInt(TIRE_NBT_KEY)));
+		}
+	}
+
+	@Override
+	public ActionResult interact(PlayerEntity player, Hand hand) {
+		ItemStack heldStack = player.getStackInHand(hand);
+		if (heldStack.getItem() instanceof TireItem tireItem) {
+			if (!this.getWorld().isClient) {
+				this.setTireType(tireItem.getTireType());
+				player.sendMessage(Text.literal(tireItem.getTireType().getDisplayName() + " installed"), true);
+			}
+			return ActionResult.success(this.getWorld().isClient);
+		}
+		return super.interact(player, hand);
 	}
 
 	@Override
@@ -163,7 +212,13 @@ public class CarEntity extends BoatEntity {
 		RoadSurface rearLeft = this.getSurfaceAtWheel(forward, right, -WHEEL_FORWARD_OFFSET, -WHEEL_SIDE_OFFSET);
 		RoadSurface rearRight = this.getSurfaceAtWheel(forward, right, -WHEEL_FORWARD_OFFSET, WHEEL_SIDE_OFFSET);
 
-		this.currentGrip = (frontLeft.grip + frontRight.grip + rearLeft.grip + rearRight.grip) / 4.0;
+		TireType tires = this.getTireType();
+		this.currentGrip = (
+				frontLeft.getGrip(tires)
+						+ frontRight.getGrip(tires)
+						+ rearLeft.getGrip(tires)
+						+ rearRight.getGrip(tires)
+		) / 4.0;
 		boolean mixed = frontLeft != frontRight || frontLeft != rearLeft || frontLeft != rearRight;
 		this.currentSurfaceName = mixed ? "Mixed" : frontLeft.displayName;
 	}
@@ -199,22 +254,64 @@ public class CarEntity extends BoatEntity {
 		return this.currentSurfaceName;
 	}
 
-	private enum RoadSurface {
-		ROAD("Road", 1.00),
-		GRAVEL("Gravel", 0.70),
-		DIRT("Dirt / Grass", 0.62),
-		MUD("Mud", 0.50),
-		SAND("Sand", 0.45),
-		SNOW("Snow", 0.32),
-		ICE("Ice", 0.14),
-		BLUE_ICE("Blue Ice", 0.10);
+	public TireType getTireType() {
+		return TireType.fromOrdinal(this.dataTracker.get(TIRE_TYPE));
+	}
+
+	public void setTireType(TireType tireType) {
+		this.dataTracker.set(TIRE_TYPE, tireType.ordinal());
+	}
+
+	public enum TireType {
+		SUMMER("Summer Tires"),
+		ALL_SEASON("All-Season Tires"),
+		WINTER("Winter Tires");
 
 		private final String displayName;
-		private final double grip;
 
-		RoadSurface(String displayName, double grip) {
+		TireType(String displayName) {
 			this.displayName = displayName;
-			this.grip = grip;
+		}
+
+		public String getDisplayName() {
+			return this.displayName;
+		}
+
+		private static TireType fromOrdinal(int ordinal) {
+			TireType[] values = values();
+			return ordinal >= 0 && ordinal < values.length ? values[ordinal] : ALL_SEASON;
+		}
+	}
+
+	private enum RoadSurface {
+		//                          Summer  All-season  Winter
+		ROAD("Road",                 1.00,       0.90,   0.82),
+		GRAVEL("Gravel",             0.68,       0.70,   0.68),
+		DIRT("Dirt / Grass",         0.58,       0.62,   0.60),
+		MUD("Mud",                   0.42,       0.50,   0.48),
+		SAND("Sand",                 0.40,       0.45,   0.43),
+		SNOW("Snow",                 0.15,       0.38,   0.75),
+		ICE("Ice",                   0.06,       0.13,   0.28),
+		BLUE_ICE("Blue Ice",         0.04,       0.09,   0.20);
+
+		private final String displayName;
+		private final double summerGrip;
+		private final double allSeasonGrip;
+		private final double winterGrip;
+
+		RoadSurface(String displayName, double summerGrip, double allSeasonGrip, double winterGrip) {
+			this.displayName = displayName;
+			this.summerGrip = summerGrip;
+			this.allSeasonGrip = allSeasonGrip;
+			this.winterGrip = winterGrip;
+		}
+
+		private double getGrip(TireType tireType) {
+			return switch (tireType) {
+				case SUMMER -> this.summerGrip;
+				case ALL_SEASON -> this.allSeasonGrip;
+				case WINTER -> this.winterGrip;
+			};
 		}
 
 		private static RoadSurface from(BlockState state) {
