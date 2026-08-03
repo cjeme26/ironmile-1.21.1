@@ -18,7 +18,14 @@ public class IronMileClient implements ClientModInitializer {
 			MinecraftClient client = MinecraftClient.getInstance();
 			if (client.player != null && client.player.getVehicle() instanceof com.cjeme26.ironmile.entity.CarEntity car) {
 				String speed = String.format(Locale.ROOT, "Iron Mile  |  %.0f km/h", car.getHorizontalSpeedKmh());
+				String surface = String.format(
+						Locale.ROOT,
+						"Surface: %s  |  Grip: %.0f%%",
+						car.getCurrentSurfaceName(),
+						car.getCurrentGrip() * 100.0
+				);
 				drawContext.drawTextWithShadow(client.textRenderer, Text.literal(speed), 10, 10, 0xFFFFFF);
+				drawContext.drawTextWithShadow(client.textRenderer, Text.literal(surface), 10, 22, 0xD7D7D7);
 			}
 		});
 	}

@@ -1,0 +1,34 @@
+IRON MILE — MILESTONE 3 SURFACE GRIP
+
+Before installing, commit the working milestone-two build in VS Code with:
+  Add basic custom vehicle movement
+
+Then:
+
+1. Quit the development Minecraft client.
+2. Extract this ZIP into Downloads.
+3. In VS Code, make sure the terminal is at the root of ironmile-1.21.1.
+4. Run:
+
+      ditto "$HOME/Downloads/milestone3-update" .
+      ./gradlew clean runClient
+
+TEST COURSE
+
+Build connected flat strips at least four blocks wide using:
+
+- Stone or concrete: Road, 100% grip
+- Gravel: 70% grip
+- Grass or dirt: 62% grip
+- Mud: 50% grip
+- Sand: 45% grip
+- Snow blocks: 32% grip
+- Packed ice: 14% grip
+- Blue ice: 10% grip
+
+Drive, brake, and steer on each. The HUD should show surface and grip. Put the
+left wheels on one surface and right wheels on another to test four-wheel
+blending; the HUD should say Mixed and show an averaged percentage.
+
+After testing successfully, commit with:
+  Add surface-dependent grip

@@ -1,8 +1,11 @@
 package com.cjeme26.ironmile.entity;
 
+import net.minecraft.block.BlockState;
+import net.minecraft.block.Blocks;
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.MovementType;
 import net.minecraft.entity.vehicle.BoatEntity;
+import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
@@ -27,10 +30,15 @@ public class CarEntity extends BoatEntity {
 	private static final double GRAVITY = 0.04;
 	private static final double STOP_EPSILON = 0.002;
 
+	private static final double WHEEL_FORWARD_OFFSET = 0.95;
+	private static final double WHEEL_SIDE_OFFSET = 0.65;
+
 	private boolean pressingLeft;
 	private boolean pressingRight;
 	private boolean pressingForward;
 	private boolean pressingBack;
+	private double currentGrip = 1.0;
+	private String currentSurfaceName = "Road";
 
 	public CarEntity(EntityType<? extends BoatEntity> entityType, World world) {
 		super(entityType, world);
@@ -77,20 +85,24 @@ public class CarEntity extends BoatEntity {
 		double forwardSpeed = velocity.x * forward.x + velocity.z * forward.z;
 		double sidewaysSpeed = velocity.x * right.x + velocity.z * right.z;
 
+		if (this.isOnGround()) {
+			this.sampleWheelGrip(forward, right);
+		}
+
 		if (this.hasControllingPassenger() && this.isOnGround()) {
-			forwardSpeed = this.applyThrottleAndBrakes(forwardSpeed);
-			this.applySteering(forwardSpeed);
+			forwardSpeed = this.applyThrottleAndBrakes(forwardSpeed, this.currentGrip);
+			this.applySteering(forwardSpeed, this.currentGrip);
 
 			// Recalculate axes after steering so acceleration follows the new heading.
 			yawRadians = this.getYaw() * MathHelper.RADIANS_PER_DEGREE;
 			forward = new Vec3d(-MathHelper.sin(yawRadians), 0.0, MathHelper.cos(yawRadians));
 			right = new Vec3d(forward.z, 0.0, -forward.x);
 
-			// Tire grip removes most sideways motion without snapping it fully to zero.
-			sidewaysSpeed *= LATERAL_VELOCITY_RETAINED;
+			// Low-grip surfaces retain more sideways velocity and therefore slide.
+			sidewaysSpeed *= this.getLateralVelocityRetained();
 		} else if (this.isOnGround()) {
 			forwardSpeed *= ROLLING_RESISTANCE;
-			sidewaysSpeed *= LATERAL_VELOCITY_RETAINED;
+			sidewaysSpeed *= this.getLateralVelocityRetained();
 		}
 
 		if (Math.abs(forwardSpeed) < STOP_EPSILON && !this.pressingForward && !this.pressingBack) {
@@ -112,18 +124,18 @@ public class CarEntity extends BoatEntity {
 		}
 	}
 
-	private double applyThrottleAndBrakes(double speed) {
+	private double applyThrottleAndBrakes(double speed, double grip) {
 		if (this.pressingForward && !this.pressingBack) {
 			if (speed < -0.03) {
-				speed = Math.min(0.0, speed + BRAKE_FORCE);
+				speed = Math.min(0.0, speed + BRAKE_FORCE * grip);
 			} else {
-				speed += ACCELERATION;
+				speed += ACCELERATION * grip;
 			}
 		} else if (this.pressingBack && !this.pressingForward) {
 			if (speed > 0.03) {
-				speed = Math.max(0.0, speed - BRAKE_FORCE);
+				speed = Math.max(0.0, speed - BRAKE_FORCE * grip);
 			} else {
-				speed -= REVERSE_ACCELERATION;
+				speed -= REVERSE_ACCELERATION * grip;
 			}
 		} else {
 			speed *= ROLLING_RESISTANCE;
@@ -132,7 +144,7 @@ public class CarEntity extends BoatEntity {
 		return MathHelper.clamp(speed, -MAX_REVERSE_SPEED, MAX_FORWARD_SPEED);
 	}
 
-	private void applySteering(double forwardSpeed) {
+	private void applySteering(double forwardSpeed, double grip) {
 		int steeringInput = (this.pressingRight ? 1 : 0) - (this.pressingLeft ? 1 : 0);
 		if (steeringInput == 0 || Math.abs(forwardSpeed) < 0.01) {
 			return;
@@ -141,13 +153,99 @@ public class CarEntity extends BoatEntity {
 		double speedRatio = Math.min(Math.abs(forwardSpeed) / 0.25, 1.0);
 		double highSpeedReduction = 1.0 - 0.55 * Math.min(Math.abs(forwardSpeed) / MAX_FORWARD_SPEED, 1.0);
 		double direction = Math.signum(forwardSpeed);
-		float yawChange = (float) (steeringInput * direction * MAX_STEERING_PER_TICK * speedRatio * highSpeedReduction);
+		float yawChange = (float) (steeringInput * direction * MAX_STEERING_PER_TICK * speedRatio * highSpeedReduction * grip);
 		this.setYaw(this.getYaw() + yawChange);
+	}
+
+	private void sampleWheelGrip(Vec3d forward, Vec3d right) {
+		RoadSurface frontLeft = this.getSurfaceAtWheel(forward, right, WHEEL_FORWARD_OFFSET, -WHEEL_SIDE_OFFSET);
+		RoadSurface frontRight = this.getSurfaceAtWheel(forward, right, WHEEL_FORWARD_OFFSET, WHEEL_SIDE_OFFSET);
+		RoadSurface rearLeft = this.getSurfaceAtWheel(forward, right, -WHEEL_FORWARD_OFFSET, -WHEEL_SIDE_OFFSET);
+		RoadSurface rearRight = this.getSurfaceAtWheel(forward, right, -WHEEL_FORWARD_OFFSET, WHEEL_SIDE_OFFSET);
+
+		this.currentGrip = (frontLeft.grip + frontRight.grip + rearLeft.grip + rearRight.grip) / 4.0;
+		boolean mixed = frontLeft != frontRight || frontLeft != rearLeft || frontLeft != rearRight;
+		this.currentSurfaceName = mixed ? "Mixed" : frontLeft.displayName;
+	}
+
+	private RoadSurface getSurfaceAtWheel(Vec3d forward, Vec3d right, double forwardOffset, double sideOffset) {
+		double x = this.getX() + forward.x * forwardOffset + right.x * sideOffset;
+		double z = this.getZ() + forward.z * forwardOffset + right.z * sideOffset;
+		double wheelY = this.getBoundingBox().minY - 0.05;
+		BlockPos pos = BlockPos.ofFloored(x, wheelY, z);
+		BlockState state = this.getWorld().getBlockState(pos);
+
+		if (state.isAir()) {
+			state = this.getWorld().getBlockState(pos.down());
+		}
+
+		return RoadSurface.from(state);
+	}
+
+	private double getLateralVelocityRetained() {
+		return 1.0 - (1.0 - LATERAL_VELOCITY_RETAINED) * this.currentGrip;
 	}
 
 	public double getHorizontalSpeedKmh() {
 		// One block is treated as one metre; Minecraft runs at 20 ticks per second.
 		return this.getVelocity().horizontalLength() * 20.0 * 3.6;
+	}
+
+	public double getCurrentGrip() {
+		return this.currentGrip;
+	}
+
+	public String getCurrentSurfaceName() {
+		return this.currentSurfaceName;
+	}
+
+	private enum RoadSurface {
+		ROAD("Road", 1.00),
+		GRAVEL("Gravel", 0.70),
+		DIRT("Dirt / Grass", 0.62),
+		MUD("Mud", 0.50),
+		SAND("Sand", 0.45),
+		SNOW("Snow", 0.32),
+		ICE("Ice", 0.14),
+		BLUE_ICE("Blue Ice", 0.10);
+
+		private final String displayName;
+		private final double grip;
+
+		RoadSurface(String displayName, double grip) {
+			this.displayName = displayName;
+			this.grip = grip;
+		}
+
+		private static RoadSurface from(BlockState state) {
+			if (state.isOf(Blocks.BLUE_ICE)) {
+				return BLUE_ICE;
+			}
+			if (state.isOf(Blocks.ICE) || state.isOf(Blocks.PACKED_ICE) || state.isOf(Blocks.FROSTED_ICE)) {
+				return ICE;
+			}
+			if (state.isOf(Blocks.SNOW) || state.isOf(Blocks.SNOW_BLOCK) || state.isOf(Blocks.POWDER_SNOW)) {
+				return SNOW;
+			}
+			if (state.isOf(Blocks.SAND) || state.isOf(Blocks.RED_SAND) || state.isOf(Blocks.SOUL_SAND)) {
+				return SAND;
+			}
+			if (state.isOf(Blocks.MUD) || state.isOf(Blocks.MUDDY_MANGROVE_ROOTS)) {
+				return MUD;
+			}
+			if (state.isOf(Blocks.GRAVEL)) {
+				return GRAVEL;
+			}
+			if (state.isOf(Blocks.DIRT)
+					|| state.isOf(Blocks.GRASS_BLOCK)
+					|| state.isOf(Blocks.COARSE_DIRT)
+					|| state.isOf(Blocks.ROOTED_DIRT)
+					|| state.isOf(Blocks.PODZOL)
+					|| state.isOf(Blocks.MYCELIUM)) {
+				return DIRT;
+			}
+			return ROAD;
+		}
 	}
 
 }
