@@ -1,5 +1,16 @@
 # Iron Mile
 
+## Milestone 6.5: low-speed automatic stopping
+
+- Releasing the controls now produces progressively stronger drivetrain drag
+  below roughly 25 km/h while preserving natural coasting at road speeds.
+- Reverse receives additional off-throttle resistance and no longer glides for
+  an implausibly long distance after releasing S.
+- The transmission settles the car to a complete stop below roughly 2 km/h,
+  preventing endless near-zero rolling.
+- Acceleration, active braking, steering, grip, wet weather, and slab clearance
+  are unchanged.
+
 ## Milestone 6.4: slab clearance
 
 - Cars can step up 0.6 blocks, allowing them to drive onto slabs, paths, and

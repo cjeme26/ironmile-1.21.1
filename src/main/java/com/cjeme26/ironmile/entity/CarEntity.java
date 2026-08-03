@@ -49,6 +49,10 @@ public class CarEntity extends BoatEntity {
 	private static final double DRIVETRAIN_EFFICIENCY = 0.86;
 	private static final double AERODYNAMIC_DRAG = 0.00030;
 	private static final double ENGINE_BRAKE_FORCE = 0.00055;
+	private static final double LOW_SPEED_COAST_THRESHOLD = 0.35;
+	private static final double LOW_SPEED_COAST_BRAKE = 0.0024;
+	private static final double REVERSE_COAST_BRAKE_MULTIPLIER = 1.5;
+	private static final double AUTOMATIC_STOP_SPEED = 0.025;
 	private static final double IDLE_RPM = 800.0;
 	private static final double DOWNSHIFT_RPM = 1600.0;
 	private static final double KICKDOWN_RPM = 2300.0;
@@ -231,6 +235,22 @@ public class CarEntity extends BoatEntity {
 			double gearRatio = this.reverseEngaged ? REVERSE_RATIO : GEAR_RATIOS[this.currentGear];
 			double engineBrake = ENGINE_BRAKE_FORCE * (gearRatio / GEAR_RATIOS[1]);
 			speed = this.moveTowardZero(speed, engineBrake);
+
+			/*
+			 * Low gears resist coasting more strongly than high gears. Fade this
+			 * effect out by 25 km/h so road-speed coasting remains natural, and
+			 * make reverse settle promptly after the driver releases S.
+			 */
+			double lowSpeedFactor = 1.0 - Math.min(Math.abs(speed) / LOW_SPEED_COAST_THRESHOLD, 1.0);
+			double lowSpeedCoastBrake = LOW_SPEED_COAST_BRAKE * lowSpeedFactor;
+			if (this.reverseEngaged) {
+				lowSpeedCoastBrake *= REVERSE_COAST_BRAKE_MULTIPLIER;
+			}
+			speed = this.moveTowardZero(speed, lowSpeedCoastBrake);
+
+			if (Math.abs(speed) < AUTOMATIC_STOP_SPEED) {
+				speed = 0.0;
+			}
 		}
 
 		if (shifting) {
