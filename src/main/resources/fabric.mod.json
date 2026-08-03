@@ -1,0 +1,34 @@
+{
+	"schemaVersion": 1,
+	"id": "ironmile",
+	"version": "${version}",
+	"name": "Iron Mile",
+	"description": "A vehicle mod focused on believable road handling, grip and gearing.",
+	"authors": [
+		"cjeme26"
+	],
+	"license": "CC0-1.0",
+	"icon": "assets/ironmile/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"com.cjeme26.ironmile.IronMile"
+		],
+		"client": [
+			"com.cjeme26.ironmile.client.IronMileClient"
+		]
+	},
+	"mixins": [
+		"ironmile.mixins.json",
+		{
+			"config": "ironmile.client.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.19.3",
+		"minecraft": "~1.21.1",
+		"java": ">=21",
+		"fabric-api": "*"
+	}
+}
