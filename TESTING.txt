@@ -1,22 +1,29 @@
-IRON MILE — MILESTONE 6.5
+IRON MILE — MILESTONE 7.4
 
 Install from the root of your ironmile-1.21.1 project:
 
-  ditto "$HOME/Downloads/milestone6-5-update" .
+  ditto "$HOME/Downloads/milestone7-4-update" .
   ./gradlew clean runClient
 
-Use a fresh car on flat stone in clear weather. Test these separately:
+Keep this uncommitted until all gap lengths are checked.
 
-1. Accelerate forward to 10 km/h, release W, and note how quickly it stops.
-2. Repeat from 20 km/h and 50 km/h. The 50 km/h test should coast longer.
-3. Reverse to about 10-15 km/h, release S, and confirm it settles promptly.
-4. Confirm the car reaches a true standstill instead of crawling indefinitely.
-5. Confirm W and S pedal braking still work as before.
-6. Confirm 0-100 km/h remains about 9 seconds on flat stone.
+Use four-block-wide bottom-slab platforms on top of ground level. Test:
 
-If the stopping behavior needs another adjustment, report the starting speed
-and approximate number of seconds until the car completely stops.
+  ----__----
+  ----___----
+  ----____----
+  ----_____----
+  ----______----
+
+1. Cross every pattern at 40, 60, 70, and 90 km/h while holding W.
+2. Watch the HUD for sudden speed loss and the body for an airborne hop.
+3. Test the centre and corner of the four-block-wide course.
+4. Confirm a drop deeper than one slab still behaves like a real fall.
+5. Confirm a ground-to-full-block wall still stops the car.
+6. Recheck normal flat-road handling and suspension.
+
+Report which exact gap and speed combinations fail, if any.
 
 Suggested commit message:
 
-  Improve low-speed automatic stopping
+  Keep cars settled across short road drops

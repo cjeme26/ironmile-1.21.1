@@ -16,8 +16,10 @@ import net.minecraft.text.Text;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.Hand;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.util.shape.VoxelShape;
 import net.minecraft.world.World;
 
 /**
@@ -63,6 +65,8 @@ public class CarEntity extends BoatEntity {
 	private static final double GRAVITY = 0.04;
 	private static final double GROUNDING_FORCE = 0.08;
 	private static final float STEP_HEIGHT = 0.6F;
+	private static final double MAX_COLLISION_STEP_DISTANCE = 0.35;
+	private static final int MAX_COLLISION_STEPS_PER_TICK = 8;
 	private static final double STOP_EPSILON = 0.002;
 
 	private static final double WHEEL_FORWARD_OFFSET = 0.95;
@@ -203,11 +207,122 @@ public class CarEntity extends BoatEntity {
 		double verticalSpeed = this.isOnGround() ? -GROUNDING_FORCE : velocity.y - GRAVITY;
 
 		this.setVelocity(horizontalX, verticalSpeed, horizontalZ);
-		this.move(MovementType.SELF, this.getVelocity());
-
-		if (this.horizontalCollision) {
+		if (this.moveWithCollisionSubsteps(this.getVelocity())) {
 			this.setVelocity(this.getVelocity().multiply(0.35, 1.0, 0.35));
 		}
+	}
+
+	/**
+	 * Resolves fast movement in short sections so low obstacles are not treated
+	 * as a single wall when the car travels more than a block during one tick.
+	 */
+	private boolean moveWithCollisionSubsteps(Vec3d movement) {
+		double horizontalDistance = movement.horizontalLength();
+		int steps = MathHelper.clamp(
+				(int) Math.ceil(horizontalDistance / MAX_COLLISION_STEP_DISTANCE),
+				1,
+				MAX_COLLISION_STEPS_PER_TICK
+		);
+		Vec3d movementStep = movement.multiply(1.0 / steps);
+		for (int step = 0; step < steps; step++) {
+			this.settleOntoNearbyRoad();
+			boolean raisedForRoadEdge = this.prepareForLowRoadEdge(movementStep);
+			Vec3d resolvedStep = raisedForRoadEdge
+					? new Vec3d(movementStep.x, 0.0, movementStep.z)
+					: movementStep;
+			this.move(MovementType.SELF, resolvedStep);
+			if (this.horizontalCollision) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private boolean prepareForLowRoadEdge(Vec3d movementStep) {
+		double horizontalDistance = movementStep.horizontalLength();
+		if (horizontalDistance < 0.001 || this.getVelocity().y > 0.05) {
+			return false;
+		}
+
+		double directionX = movementStep.x / horizontalDistance;
+		double directionZ = movementStep.z / horizontalDistance;
+		double sideX = directionZ;
+		double sideZ = -directionX;
+		double leadingDistance = 0.90 + horizontalDistance;
+		double bodyBottom = this.getBoundingBox().minY;
+
+		double leftSupport = this.getRoadSupportHeight(
+				this.getX() + directionX * leadingDistance - sideX * WHEEL_SIDE_OFFSET,
+				this.getZ() + directionZ * leadingDistance - sideZ * WHEEL_SIDE_OFFSET,
+				bodyBottom,
+				STEP_HEIGHT
+		);
+		double rightSupport = this.getRoadSupportHeight(
+				this.getX() + directionX * leadingDistance + sideX * WHEEL_SIDE_OFFSET,
+				this.getZ() + directionZ * leadingDistance + sideZ * WHEEL_SIDE_OFFSET,
+				bodyBottom,
+				STEP_HEIGHT
+		);
+		double centreSupport = this.getRoadSupportHeight(
+				this.getX() + directionX * leadingDistance,
+				this.getZ() + directionZ * leadingDistance,
+				bodyBottom,
+				STEP_HEIGHT
+		);
+		double rise = Math.max(centreSupport, Math.max(leftSupport, rightSupport)) - bodyBottom;
+		if (rise <= 0.05 || rise > STEP_HEIGHT + 0.01) {
+			return false;
+		}
+
+		double beforeLiftY = this.getY();
+		this.move(MovementType.SELF, new Vec3d(0.0, rise, 0.0));
+		double completedLift = this.getY() - beforeLiftY;
+		if (completedLift < rise - 0.01) {
+			this.move(MovementType.SELF, new Vec3d(0.0, -completedLift, 0.0));
+			return false;
+		}
+		return true;
+	}
+
+	private void settleOntoNearbyRoad() {
+		if (this.getVelocity().y > 0.0) {
+			return;
+		}
+
+		double bodyBottom = this.getBoundingBox().minY;
+		double inset = 0.72;
+		double support = this.getRoadSupportHeight(this.getX(), this.getZ(), bodyBottom, 0.01);
+		support = Math.max(support, this.getRoadSupportHeight(this.getX() - inset, this.getZ() - inset, bodyBottom, 0.01));
+		support = Math.max(support, this.getRoadSupportHeight(this.getX() - inset, this.getZ() + inset, bodyBottom, 0.01));
+		support = Math.max(support, this.getRoadSupportHeight(this.getX() + inset, this.getZ() - inset, bodyBottom, 0.01));
+		support = Math.max(support, this.getRoadSupportHeight(this.getX() + inset, this.getZ() + inset, bodyBottom, 0.01));
+
+		double drop = bodyBottom - support;
+		if (drop > 0.05 && drop <= STEP_HEIGHT + 0.01) {
+			this.move(MovementType.SELF, new Vec3d(0.0, -drop, 0.0));
+		}
+	}
+
+	private double getRoadSupportHeight(double x, double z, double bodyBottom, double maximumRise) {
+		int highestY = MathHelper.floor(bodyBottom + maximumRise);
+		int lowestY = MathHelper.floor(bodyBottom - 1.0);
+
+		for (int y = highestY; y >= lowestY; y--) {
+			BlockPos pos = BlockPos.ofFloored(x, y, z);
+			BlockState state = this.getWorld().getBlockState(pos);
+			VoxelShape shape = state.getCollisionShape(this.getWorld(), pos);
+			if (shape.isEmpty()) {
+				continue;
+			}
+
+			double top = y + shape.getMax(Direction.Axis.Y);
+			if (top <= bodyBottom + maximumRise + 0.01) {
+				return top;
+			}
+		}
+
+		return bodyBottom - 1.0;
 	}
 
 	private double applyThrottleAndBrakes(double speed, double grip) {

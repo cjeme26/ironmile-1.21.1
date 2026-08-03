@@ -1,5 +1,54 @@
 # Iron Mile
 
+## Milestone 7.4: short-drop road adhesion
+
+- Before each collision section, five points beneath the physical car search
+  for road support within 0.6 blocks.
+- After leaving a slab, the car settles onto the nearby lower road instead of
+  remaining briefly airborne and striking the next slab during descent.
+- The predictive step check now includes the centre of the leading edge and
+  can recover a descending car that is slightly below the next slab surface.
+- Drops deeper than 0.6 blocks remain real falls; full blocks remain walls.
+
+## Milestone 7.3: predictive road-edge stepping
+
+- The physical car now samples the road height just ahead of both leading
+  corners before each short movement section.
+- A support rise of at most 0.6 blocks lifts the collision box before impact,
+  preserving momentum across bottom slabs at road speed.
+- A full block exceeds the clearance limit and is left to ordinary collision,
+  so walls still stop the car.
+- This replaces the post-impact retry from 7.2; drivetrain tuning is unchanged.
+
+## Milestone 7.2: explicit low-obstacle clearance
+
+- When normal collision stepping rejects a slab, a grounded car now tests the
+  blocked remainder of its movement from 0.6 blocks higher.
+- Bottom slabs clear that test and the car settles onto them immediately.
+- Full blocks remain too tall and still stop the car normally.
+- The fallback operates only after a real horizontal collision and does not
+  change drivetrain speed, acceleration, braking, grip, or visual suspension.
+
+## Milestone 7.1: reliable slab collision at speed
+
+- Fast movement is resolved in short collision steps instead of one movement
+  spanning more than a block.
+- Slab step-up detection is therefore evaluated close to the obstacle and
+  remains reliable on longer, higher-speed approaches.
+- The summed movement per tick is unchanged, so acceleration, maximum speed,
+  braking, grip, and suspension rendering retain their Milestone 7 tuning.
+
+## Milestone 7: visual suspension and body movement
+
+- The four virtual wheel positions now sample the height of collision shapes,
+  including slabs and other partial blocks.
+- The body pitches gradually on hills, rolls over uneven ground, leans subtly
+  while cornering, and reacts to acceleration and braking.
+- Vertical suspension travel softens the visual jolt when the collision box
+  climbs slabs and other low road edges.
+- All movement is visual and damped. Collision, drivetrain, braking, tire grip,
+  wet weather, automatic stopping, and the 0-100 tune remain unchanged.
+
 ## Milestone 6.5: low-speed automatic stopping
 
 - Releasing the controls now produces progressively stronger drivetrain drag
