@@ -598,6 +598,14 @@ public class CarEntity extends BoatEntity {
 		return this.reverseEngaged;
 	}
 
+	/** Client-side steering input used only to animate the front wheels. */
+	public float getVisualSteeringInput() {
+		if (this.pressingLeft == this.pressingRight) {
+			return 0.0F;
+		}
+		return this.pressingLeft ? 1.0F : -1.0F;
+	}
+
 	public boolean isBrakeInputActive() {
 		return (this.lastForwardSpeed > 0.03 && this.pressingBack)
 				|| (this.lastForwardSpeed < -0.03 && this.pressingForward);

@@ -113,6 +113,32 @@
 
 An experimental Fabric vehicle mod for Minecraft 1.21.1.
 
+## Milestone 10: animated PSX hatchback
+
+- Replaced the iron-block prototype body with GGBotNet's CC0 Car 03 hatchback.
+- Added a lightweight OBJ mesh reader for the original low-poly geometry.
+- Removed the model's embedded wheels and render four standalone wheel meshes
+  around independent animation pivots.
+- Every wheel rotates from the car's signed road speed, including reverse.
+- The front pair smoothly follows the driver's steering input up to 28 degrees.
+- Wheel animation is interpolated between game ticks for smooth motion.
+- Existing suspension pitch, body roll, dynamic headlight illumination, visible
+  lamps, engine audio, grip, weather, tires and automatic transmission remain.
+- Lamp geometry was repositioned onto the hatchback's front and rear clusters.
+- The model is normalized to approximately 1.85 blocks wide and 3.9 blocks long.
+- An editable separated Blockbench source is retained under
+  `development_assets/hatchback` alongside the original CC0 source files.
+- Third-party source and licensing information is recorded in
+  `ASSET_CREDITS.md`.
+
+### Milestone 10.0.1 render correction
+
+- OBJ triangles are emitted as degenerate quads to match Minecraft's entity
+  cutout render layer, preventing unrelated faces from being joined into large
+  black and yellow shards.
+- Front, brake and reversing lamp overlays were reduced and moved closer to the
+  hatchback's original textured lamp clusters.
+
 ## Milestone 9.2: smooth dynamic headlights
 
 - Headlight illumination now uses LambDynamicLights instead of temporary

@@ -1,24 +1,32 @@
-IRON MILE — MILESTONE 9.2.1 CORRECTION
+IRON MILE — MILESTONE 10.0.1 RENDER CORRECTION
 
 Install from the Iron Mile project folder:
 
-  ditto "$HOME/Downloads/milestone9-2-1-update" .
+  ditto "$HOME/Downloads/milestone10-0-1-update" .
   ./gradlew clean runClient
 
-Test at night:
+This is a small overlay for Milestone 10. Keep the Milestone 10 model and
+texture files already installed in your project.
 
-1. Use /time set midnight and enter the car.
-2. Press H. Smooth dynamic illumination should now appear at the front bumper.
-3. Drive and turn, then approach a wall until the bumper is less than one block
-   away. The light should move smoothly and continue illuminating the wall.
-4. Press H again and confirm the illumination disappears.
-5. Confirm there is no visible marker object at the front of the car.
-6. Confirm all earlier Iron Mile behavior still works.
+What changed:
 
-Cause corrected: LambDynamicLights ignores entities with Minecraft's invisible
-flag. The light anchor now uses only an empty renderer, which remains completely
-unseen while allowing LambDynamicLights to process it.
+- Corrected OBJ triangles for Minecraft's four-vertex render layer.
+- Removed the long black/yellow stretched shards caused by malformed faces.
+- Reduced and repositioned the temporary headlight, brake-light, and
+  reversing-light overlays so they sit closer to the real lamp clusters.
 
-If successful, commit with:
+Please check before committing:
 
-  Fix LambDynamicLights headlight anchor
+1. Spawn a fresh car and walk around every side.
+2. Confirm there are no stretched spikes, shards, or faces crossing the car.
+3. Confirm the yellow body texture and windows look coherent.
+4. Drive forward and reverse; confirm all four wheels rotate cleanly.
+5. Steer left and right; confirm the front wheels visibly steer.
+6. Press H and test headlights, braking lights, and reversing lights.
+7. Mount and dismount, then check the player position.
+8. Drive close to a full-block wall and report whether the visible car passes
+   too far into it. Visual length-aware collision will be handled separately
+   if necessary.
+
+Do not commit this correction until those checks pass. If Gradle reports an
+error, copy the complete error text.
