@@ -30,5 +30,8 @@
 		"minecraft": "~1.21.1",
 		"java": ">=21",
 		"fabric-api": "*"
+	},
+	"suggests": {
+		"lambdynlights": ">=4.0.0"
 	}
 }

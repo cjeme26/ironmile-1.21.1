@@ -12,6 +12,10 @@ repositories {
 	// Loom adds the essential maven repositories to download Minecraft and libraries from automatically.
 	// See https://docs.gradle.org/current/userguide/declaring_repositories.html
 	// for more information about repositories.
+	maven {
+		name = "Gegy"
+		url = uri("https://maven.gegy.dev")
+	}
 }
 
 loom {
@@ -33,6 +37,10 @@ dependencies {
 
 	// Fabric API. This is technically optional, but you probably want it anyway.
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+	// Makes smooth headlight illumination available in the development client.
+	// Players install LambDynamicLights separately alongside the built Iron Mile jar.
+	modLocalRuntime "dev.lambdaurora.lambdynamiclights:lambdynamiclights-runtime:${project.lambdynlights_version}"
 }
 
 processResources {

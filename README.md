@@ -113,6 +113,40 @@
 
 An experimental Fabric vehicle mod for Minecraft 1.21.1.
 
+## Milestone 9.2: smooth dynamic headlights
+
+- Headlight illumination now uses LambDynamicLights instead of temporary
+  light blocks in the world.
+- An invisible, non-colliding light anchor follows the front bumper whenever
+  the headlights are switched on.
+- Lighting moves smoothly with the rendered car and continues illuminating a
+  wall when the bumper is close to it.
+- Switching the headlights off or removing the car removes the light anchor.
+- The anchor cannot be obtained, summoned, saved, attacked, or seen.
+- The previous temporary-light block remains registered only so worlds opened
+  after Milestone 9.1 can safely clean up any old light positions.
+
+LambDynamicLights is a client-side recommended dependency. The development
+client downloads version 4.8.10 for Minecraft 1.21.1 automatically. Players
+using a built Iron Mile jar should install LambDynamicLights separately.
+
+### Milestone 9.2.1 correction
+
+- The light anchor is no longer marked with Minecraft's invisible entity flag,
+  because LambDynamicLights excludes entities carrying that flag.
+- It remains completely unseen because its registered renderer draws nothing.
+
+## Milestone 9.1: road illumination
+
+- Switched-on headlights now cast real Minecraft light onto the road ahead.
+- Three invisible light points follow the car to give the beam useful reach.
+- Walls and other occupied blocks stop the projected light positions.
+- Previous light points remove themselves shortly after the car moves, the
+  headlights are switched off, or the car is removed.
+- The temporary light has no collision, outline, item, or drops and cannot
+  replace road blocks, walls, fluids, or other occupied spaces.
+- Milestone 9's visible front, brake, and reversing lamps remain unchanged.
+
 ## Prototype milestone 6
 
 - The prototype vehicle appears as a long iron box.

@@ -16,6 +16,17 @@ public final class ModEntities {
 					.trackingTickInterval(1)
 					.build("ironmile:car")
 	);
+	public static final EntityType<HeadlightMarkerEntity> HEADLIGHT_MARKER = Registry.register(
+			Registries.ENTITY_TYPE,
+			IronMile.id("headlight_marker"),
+			EntityType.Builder.<HeadlightMarkerEntity>create(HeadlightMarkerEntity::new, SpawnGroup.MISC)
+					.dimensions(0.1F, 0.1F)
+					.maxTrackingRange(10)
+					.trackingTickInterval(1)
+					.disableSaving()
+					.disableSummon()
+					.build("ironmile:headlight_marker")
+	);
 
 	private ModEntities() {
 	}

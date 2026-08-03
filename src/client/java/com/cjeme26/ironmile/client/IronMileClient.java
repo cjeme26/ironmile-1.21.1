@@ -13,6 +13,7 @@ import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
+import net.minecraft.client.render.entity.EmptyEntityRenderer;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.text.Text;
 import org.lwjgl.glfw.GLFW;
@@ -31,6 +32,7 @@ public class IronMileClient implements ClientModInitializer {
 				"key.category.ironmile"
 		));
 		EntityRendererRegistry.register(ModEntities.CAR, CarEntityRenderer::new);
+		EntityRendererRegistry.register(ModEntities.HEADLIGHT_MARKER, EmptyEntityRenderer::new);
 		ClientTickEvents.END_CLIENT_TICK.register(EngineSoundManager::tick);
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
 			while (toggleHeadlightsKey.wasPressed()) {

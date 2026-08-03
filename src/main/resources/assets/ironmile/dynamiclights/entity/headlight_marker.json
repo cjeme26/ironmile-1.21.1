@@ -1,0 +1,6 @@
+{
+	"match": {
+		"type": "ironmile:headlight_marker"
+	},
+	"luminance": 15
+}

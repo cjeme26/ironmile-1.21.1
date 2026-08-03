@@ -6,6 +6,7 @@ import com.cjeme26.ironmile.entity.ModEntities;
 import com.cjeme26.ironmile.item.ModItems;
 import com.cjeme26.ironmile.sound.ModSounds;
 import com.cjeme26.ironmile.network.HeadlightTogglePayload;
+import com.cjeme26.ironmile.block.ModBlocks;
 
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
@@ -25,6 +26,7 @@ public class IronMile implements ModInitializer {
 
 	@Override
 	public void onInitialize() {
+		ModBlocks.initialize();
 		ModEntities.initialize();
 		ModItems.initialize();
 		ModSounds.initialize();

@@ -1,26 +1,24 @@
-IRON MILE — MILESTONE 9
+IRON MILE — MILESTONE 9.2.1 CORRECTION
 
-Install from the root of your ironmile-1.21.1 project:
+Install from the Iron Mile project folder:
 
-  ditto "$HOME/Downloads/milestone9-update" .
+  ditto "$HOME/Downloads/milestone9-2-1-update" .
   ./gradlew clean runClient
 
-Use third-person view and test in daylight first:
+Test at night:
 
-1. Enter the car and press H. The two FRONT lamps and HUD should switch On.
-2. Press H again. The front lamps and HUD should switch Off.
-3. Turn headlights on, leave/re-enter the world, and confirm they remain on.
-4. Drive forward, then hold S to brake. Both red REAR lamps should brighten.
-5. Release S after stopping. Brake lamps should return to dark red.
-6. Reverse. The two small white REAR lamps should brighten.
-7. Drive and brake in reverse with W; check both lamp types behave sensibly.
-8. Confirm all lamps stay attached through pitch, roll, slabs, and turns.
-9. Check Controls -> Key Binds -> Iron Mile -> Toggle Headlights.
-10. Confirm engine audio and all driving behaviour remain unchanged.
+1. Use /time set midnight and enter the car.
+2. Press H. Smooth dynamic illumination should now appear at the front bumper.
+3. Drive and turn, then approach a wall until the bumper is less than one block
+   away. The light should move smoothly and continue illuminating the wall.
+4. Press H again and confirm the illumination disappears.
+5. Confirm there is no visible marker object at the front of the car.
+6. Confirm all earlier Iron Mile behavior still works.
 
-The headlights do not illuminate terrain yet. Report if front/rear are swapped,
-if H does nothing, if a lamp stays active incorrectly, or if placement is poor.
+Cause corrected: LambDynamicLights ignores entities with Minecraft's invisible
+flag. The light anchor now uses only an empty renderer, which remains completely
+unseen while allowing LambDynamicLights to process it.
 
-Suggested commit message:
+If successful, commit with:
 
-  Add synchronized visual vehicle lights
+  Fix LambDynamicLights headlight anchor

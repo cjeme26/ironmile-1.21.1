@@ -21,6 +21,7 @@ import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.util.shape.VoxelShape;
 import net.minecraft.world.World;
+import net.minecraft.server.world.ServerWorld;
 
 /**
  * The second Iron Mile vehicle prototype: simple road-focused movement.
@@ -76,7 +77,6 @@ public class CarEntity extends BoatEntity {
 
 	private static final double WHEEL_FORWARD_OFFSET = 0.95;
 	private static final double WHEEL_SIDE_OFFSET = 0.65;
-
 	private boolean pressingLeft;
 	private boolean pressingRight;
 	private boolean pressingForward;
@@ -89,6 +89,7 @@ public class CarEntity extends BoatEntity {
 	private double engineRpm = IDLE_RPM;
 	private double lastForwardSpeed;
 	private boolean reverseEngaged;
+	private HeadlightMarkerEntity headlightMarker;
 
 	public CarEntity(EntityType<? extends BoatEntity> entityType, World world) {
 		super(entityType, world);
@@ -154,6 +155,10 @@ public class CarEntity extends BoatEntity {
 
 	@Override
 	public void tick() {
+		if (!this.getWorld().isClient) {
+			this.updateHeadlightMarker((ServerWorld) this.getWorld());
+		}
+
 		/*
 		 * Minecraft lets the controlling client simulate a ridden boat and sends
 		 * the resulting vehicle position to the server. Keeping the inherited tick
@@ -166,6 +171,23 @@ public class CarEntity extends BoatEntity {
 
 		this.baseTick();
 		this.tickRoadMovement();
+	}
+
+	private void updateHeadlightMarker(ServerWorld world) {
+		if (!this.areHeadlightsOn() || this.isRemoved()) {
+			if (this.headlightMarker != null) {
+				this.headlightMarker.discard();
+				this.headlightMarker = null;
+			}
+			return;
+		}
+
+		if (this.headlightMarker == null || this.headlightMarker.isRemoved()) {
+			this.headlightMarker = new HeadlightMarkerEntity(ModEntities.HEADLIGHT_MARKER, world);
+			this.headlightMarker.setCar(this);
+			this.headlightMarker.followCar();
+			world.spawnEntity(this.headlightMarker);
+		}
 	}
 
 	private void tickRoadMovement() {
