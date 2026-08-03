@@ -35,14 +35,27 @@ public class CarEntity extends BoatEntity {
 	private static final String TIRE_NBT_KEY = "IronMileTireType";
 
 	// Horizontal speeds are measured in blocks per game tick.
-	public static final double MAX_FORWARD_SPEED = 0.75;
-	public static final double MAX_REVERSE_SPEED = 0.25;
-	public static final double ACCELERATION = 0.012;
-	public static final double REVERSE_ACCELERATION = 0.007;
-	public static final double BRAKE_FORCE = 0.035;
-	public static final double ROLLING_RESISTANCE = 0.985;
+	public static final double MAX_FORWARD_SPEED = 1.95;
+	public static final double MAX_REVERSE_SPEED = 0.35;
+	public static final double BRAKE_FORCE = 0.018;
+	public static final double ROLLING_RESISTANCE = 0.992;
 	public static final double LATERAL_VELOCITY_RETAINED = 0.42;
 	public static final float MAX_STEERING_PER_TICK = 2.6F;
+	private static final double[] GEAR_RATIOS = {0.0, 3.50, 2.10, 1.45, 1.10, 0.85, 0.68};
+	private static final double REVERSE_RATIO = 3.20;
+	private static final double FINAL_DRIVE_RATIO = 3.70;
+	private static final double WHEEL_RADIUS_METRES = 0.34;
+	private static final double VEHICLE_MASS_KG = 1500.0;
+	private static final double DRIVETRAIN_EFFICIENCY = 0.86;
+	private static final double AERODYNAMIC_DRAG = 0.00030;
+	private static final double ENGINE_BRAKE_FORCE = 0.00055;
+	private static final double IDLE_RPM = 800.0;
+	private static final double DOWNSHIFT_RPM = 1600.0;
+	private static final double KICKDOWN_RPM = 2300.0;
+	private static final double UPSHIFT_RPM = 5800.0;
+	private static final double REDLINE_RPM = 6500.0;
+	private static final double REV_LIMITER_RPM = 6700.0;
+	private static final int SHIFT_DURATION_TICKS = 6;
 	private static final double GRAVITY = 0.04;
 	private static final double STOP_EPSILON = 0.002;
 
@@ -56,6 +69,11 @@ public class CarEntity extends BoatEntity {
 	private double currentGrip = 1.0;
 	private String currentSurfaceName = "Road";
 	private String currentRoadConditionName = "Dry";
+	private int currentGear = 1;
+	private int shiftTicksRemaining;
+	private double engineRpm = IDLE_RPM;
+	private double lastForwardSpeed;
+	private boolean reverseEngaged;
 
 	public CarEntity(EntityType<? extends BoatEntity> entityType, World world) {
 		super(entityType, world);
@@ -175,23 +193,141 @@ public class CarEntity extends BoatEntity {
 	}
 
 	private double applyThrottleAndBrakes(double speed, double grip) {
+		this.updateAutomaticTransmission(speed);
+		boolean shifting = this.shiftTicksRemaining > 0;
+
 		if (this.pressingForward && !this.pressingBack) {
 			if (speed < -0.03) {
 				speed = Math.min(0.0, speed + BRAKE_FORCE * grip);
-			} else {
-				speed += ACCELERATION * grip;
+				this.reverseEngaged = speed < 0.0;
+			} else if (!shifting) {
+				this.reverseEngaged = false;
+				speed += this.getDrivetrainAcceleration(speed, grip, false);
 			}
 		} else if (this.pressingBack && !this.pressingForward) {
 			if (speed > 0.03) {
 				speed = Math.max(0.0, speed - BRAKE_FORCE * grip);
-			} else {
-				speed -= REVERSE_ACCELERATION * grip;
+				this.reverseEngaged = false;
+			} else if (!shifting) {
+				this.reverseEngaged = true;
+				speed -= this.getDrivetrainAcceleration(speed, grip, true);
 			}
 		} else {
 			speed *= ROLLING_RESISTANCE;
+			double gearRatio = this.reverseEngaged ? REVERSE_RATIO : GEAR_RATIOS[this.currentGear];
+			double engineBrake = ENGINE_BRAKE_FORCE * (gearRatio / GEAR_RATIOS[1]);
+			speed = this.moveTowardZero(speed, engineBrake);
 		}
 
-		return MathHelper.clamp(speed, -MAX_REVERSE_SPEED, MAX_FORWARD_SPEED);
+		if (shifting) {
+			speed *= 0.998;
+		}
+
+		// Quadratic drag makes high-speed acceleration taper naturally.
+		double drag = AERODYNAMIC_DRAG * speed * speed;
+		speed = this.moveTowardZero(speed, drag);
+		speed = MathHelper.clamp(speed, -MAX_REVERSE_SPEED, MAX_FORWARD_SPEED);
+		this.lastForwardSpeed = speed;
+		this.updateEngineRpm(speed, shifting);
+		return speed;
+	}
+
+	private void updateAutomaticTransmission(double speed) {
+		if (this.shiftTicksRemaining > 0) {
+			this.shiftTicksRemaining--;
+			return;
+		}
+
+		if (speed < -0.03 || this.reverseEngaged) {
+			this.currentGear = 1;
+			return;
+		}
+
+		double coupledRpm = this.calculateCoupledRpm(speed, GEAR_RATIOS[this.currentGear]);
+		if (this.pressingForward) {
+			if (coupledRpm >= UPSHIFT_RPM && this.currentGear < 6) {
+				this.beginShift(this.currentGear + 1);
+				return;
+			}
+
+			if (coupledRpm < KICKDOWN_RPM && this.currentGear > 1) {
+				double lowerGearRpm = this.calculateCoupledRpm(speed, GEAR_RATIOS[this.currentGear - 1]);
+				if (lowerGearRpm < REDLINE_RPM) {
+					this.beginShift(this.currentGear - 1);
+					return;
+				}
+			}
+		} else if (coupledRpm > 2600.0 && this.currentGear < 6) {
+			// With binary W input, throttle release represents an economy upshift.
+			this.beginShift(this.currentGear + 1);
+			return;
+		}
+
+		if (coupledRpm < DOWNSHIFT_RPM && this.currentGear > 1) {
+			this.beginShift(this.currentGear - 1);
+		}
+	}
+
+	private void beginShift(int newGear) {
+		this.currentGear = MathHelper.clamp(newGear, 1, 6);
+		this.shiftTicksRemaining = SHIFT_DURATION_TICKS;
+	}
+
+	private double getDrivetrainAcceleration(double speed, double grip, boolean reverse) {
+		double ratio = reverse ? REVERSE_RATIO : GEAR_RATIOS[this.currentGear];
+		double coupledRpm = this.calculateCoupledRpm(speed, ratio);
+		if (coupledRpm >= REV_LIMITER_RPM) {
+			return 0.0;
+		}
+
+		double torqueNm = this.getEngineTorqueNm(coupledRpm);
+		double wheelForceNewtons = torqueNm * ratio * FINAL_DRIVE_RATIO * DRIVETRAIN_EFFICIENCY;
+		double accelerationMetresPerSecondSquared = wheelForceNewtons / VEHICLE_MASS_KG;
+		return accelerationMetresPerSecondSquared / 400.0 * grip;
+	}
+
+	private double calculateCoupledRpm(double speed, double ratio) {
+		double metresPerSecond = Math.abs(speed) * 20.0;
+		double wheelRpm = metresPerSecond / (2.0 * Math.PI * WHEEL_RADIUS_METRES) * 60.0;
+		return Math.max(IDLE_RPM, wheelRpm * ratio * FINAL_DRIVE_RATIO);
+	}
+
+	private double getEngineTorqueNm(double rpm) {
+		if (rpm < 1200.0) {
+			return this.lerp(160.0, 220.0, (rpm - IDLE_RPM) / 400.0);
+		}
+		if (rpm < 2500.0) {
+			return this.lerp(220.0, 290.0, (rpm - 1200.0) / 1300.0);
+		}
+		if (rpm < 4500.0) {
+			return this.lerp(290.0, 300.0, (rpm - 2500.0) / 2000.0);
+		}
+		if (rpm < REDLINE_RPM) {
+			return this.lerp(300.0, 210.0, (rpm - 4500.0) / 2000.0);
+		}
+		return 180.0;
+	}
+
+	private double lerp(double start, double end, double amount) {
+		return start + (end - start) * MathHelper.clamp(amount, 0.0, 1.0);
+	}
+
+	private double moveTowardZero(double value, double amount) {
+		if (value > 0.0) {
+			return Math.max(0.0, value - amount);
+		}
+		if (value < 0.0) {
+			return Math.min(0.0, value + amount);
+		}
+		return 0.0;
+	}
+
+	private void updateEngineRpm(double speed, boolean shifting) {
+		double ratio = this.reverseEngaged ? REVERSE_RATIO : GEAR_RATIOS[this.currentGear];
+		double targetRpm = shifting
+				? Math.max(IDLE_RPM, this.engineRpm * 0.86)
+				: Math.min(REV_LIMITER_RPM, this.calculateCoupledRpm(speed, ratio));
+		this.engineRpm += (targetRpm - this.engineRpm) * 0.35;
 	}
 
 	private void applySteering(double forwardSpeed, double grip) {
@@ -255,6 +391,20 @@ public class CarEntity extends BoatEntity {
 	public double getHorizontalSpeedKmh() {
 		// One block is treated as one metre; Minecraft runs at 20 ticks per second.
 		return this.getVelocity().horizontalLength() * 20.0 * 3.6;
+	}
+
+	public int getEngineRpm() {
+		return (int) Math.round(this.engineRpm / 50.0) * 50;
+	}
+
+	public String getGearDisplay() {
+		if (this.shiftTicksRemaining > 0) {
+			return "N";
+		}
+		if (this.reverseEngaged || this.lastForwardSpeed < -0.01) {
+			return "R";
+		}
+		return "D" + this.currentGear;
 	}
 
 	public double getCurrentGrip() {

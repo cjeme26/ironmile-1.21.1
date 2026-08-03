@@ -2,7 +2,7 @@
 
 An experimental Fabric vehicle mod for Minecraft 1.21.1.
 
-## Prototype milestone 5
+## Prototype milestone 6
 
 - The prototype vehicle appears as a long iron box.
 - Find **Iron Mile Prototype Car** in the Tools & Utilities creative tab, or use
@@ -24,6 +24,12 @@ An experimental Fabric vehicle mod for Minecraft 1.21.1.
 - Roofed roads and tunnels stay dry; partial shelter produces mixed conditions.
 - Wet grip differs by tire type and is blended across all four wheels.
 - The HUD displays Dry, Wet or Mixed road condition.
+- A 300 Nm engine now uses an RPM-dependent torque curve.
+- A six-speed automatic gearbox shifts up, down and performs kickdown.
+- Reverse has its own ratio, and S remains the brake until the car stops.
+- Shifts briefly interrupt drive force and show N in the development HUD.
+- Engine braking depends on gear, while aerodynamic drag limits top speed.
+- The HUD displays automatic gear and engine RPM.
 
 The car still temporarily inherits Minecraft's boat passenger/input plumbing,
 but the controlling player's acceleration, braking, steering, rolling
@@ -36,6 +42,10 @@ provide a compromise.
 Wetness is intentionally immediate in this milestone: exposed roads are wet
 during rain and return to dry as soon as the rain ends. Lingering moisture and
 hydroplaning can be added after the exposure and grip model is proven.
+
+The drivetrain targets a heavy road car rather than a sports car. Engine force
+is converted through the active gear and final drive, divided by vehicle mass,
+then limited by the existing tire, surface and weather grip calculation.
 
 ## Development
 

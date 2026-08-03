@@ -1,0 +1,44 @@
+IRON MILE — MILESTONE 6 AUTOMATIC DRIVETRAIN
+
+Before installing, commit the working milestone-five build in VS Code with:
+  Add wet-weather grip
+
+Then:
+
+1. Quit the development Minecraft client.
+2. Extract this ZIP into Downloads.
+3. In VS Code, make sure the terminal is at the root of ironmile-1.21.1.
+4. Run:
+
+      ditto "$HOME/Downloads/milestone6-update" .
+      ./gradlew clean runClient
+
+FIRST TEST: DRY ROAD WITH SUMMER TIRES
+
+- Hold W continuously. Watch RPM rise, N appear briefly during shifts, and RPM
+  fall after each upshift.
+- Expected full-throttle shifts are approximately 57, 96 and 139 km/h.
+- Expected maximum speed is approximately 140 km/h.
+- Release W at high speed. The transmission should select economy gears D5/D6
+  and the car should slow through rolling resistance, engine braking and drag.
+- Press W again after slowing in a high gear. The gearbox should downshift when
+  RPM is too low (kickdown).
+- Hold S while moving forward: it must brake first, then show R and reverse only
+  after nearly stopping.
+
+SECOND TEST: EXISTING PHYSICS
+
+- Confirm summer/all-season/winter tires still install and persist.
+- Confirm dry, wet, sheltered and mixed weather conditions still work.
+- Confirm snow and ice still limit drivetrain force and make the car slide.
+
+REPORT THESE FEELINGS BEFORE TUNING
+
+- Is 0–100 km/h too slow, too fast, or suitable for a heavy road car?
+- Are shifts too frequent, too late, or too abrupt?
+- Does releasing W slow the car too quickly?
+- Does braking feel too strong or weak?
+- Does the car remain stable near 140 km/h?
+
+After testing successfully, commit with:
+  Add six-speed automatic drivetrain
