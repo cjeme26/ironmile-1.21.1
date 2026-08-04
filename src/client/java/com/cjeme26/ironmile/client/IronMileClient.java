@@ -5,6 +5,7 @@ import com.cjeme26.ironmile.client.sound.EngineSoundManager;
 import com.cjeme26.ironmile.entity.ModEntities;
 import com.cjeme26.ironmile.entity.CarEntity;
 import com.cjeme26.ironmile.network.HeadlightTogglePayload;
+import com.cjeme26.ironmile.network.CarInputPayload;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
@@ -34,6 +35,19 @@ public class IronMileClient implements ClientModInitializer {
 		EntityRendererRegistry.register(ModEntities.CAR, CarEntityRenderer::new);
 		EntityRendererRegistry.register(ModEntities.HEADLIGHT_MARKER, EmptyEntityRenderer::new);
 		ClientTickEvents.END_CLIENT_TICK.register(EngineSoundManager::tick);
+		ClientTickEvents.END_CLIENT_TICK.register(client -> {
+			if (client.player == null || !(client.player.getVehicle() instanceof CarEntity car)) {
+				return;
+			}
+			int inputMask = 0;
+			if (client.options.leftKey.isPressed()) inputMask |= CarInputPayload.LEFT;
+			if (client.options.rightKey.isPressed()) inputMask |= CarInputPayload.RIGHT;
+			if (client.options.forwardKey.isPressed()) inputMask |= CarInputPayload.FORWARD;
+			if (client.options.backKey.isPressed()) inputMask |= CarInputPayload.BACK;
+			ClientPlayNetworking.send(new CarInputPayload(
+					car.getId(), inputMask, car.getX(), car.getY(), car.getZ(), car.getYaw()
+			));
+		});
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
 			while (toggleHeadlightsKey.wasPressed()) {
 				if (client.player != null && client.player.getVehicle() instanceof CarEntity car) {

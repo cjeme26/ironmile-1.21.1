@@ -1,13 +1,9 @@
 package com.cjeme26.ironmile.client.render;
 
 import com.cjeme26.ironmile.entity.CarEntity;
-import net.minecraft.block.Blocks;
-import net.minecraft.block.BlockState;
-import net.minecraft.client.render.OverlayTexture;
 import net.minecraft.client.render.RenderLayer;
 import net.minecraft.client.render.VertexConsumer;
 import net.minecraft.client.render.VertexConsumerProvider;
-import net.minecraft.client.render.block.BlockRenderManager;
 import net.minecraft.client.render.entity.EntityRenderer;
 import net.minecraft.client.render.entity.EntityRendererFactory;
 import net.minecraft.client.util.math.MatrixStack;
@@ -26,6 +22,9 @@ import java.util.WeakHashMap;
 public class CarEntityRenderer extends EntityRenderer<CarEntity> {
 	private static final Identifier BODY_TEXTURE = Identifier.of("ironmile", "textures/entity/hatchback_yellow.png");
 	private static final Identifier WHEEL_TEXTURE = Identifier.of("ironmile", "textures/entity/wheel.png");
+	private static final Identifier HEADLIGHT_TEXTURE = Identifier.of("ironmile", "textures/entity/car3_lights_headlights.png");
+	private static final Identifier BRAKE_LIGHT_TEXTURE = Identifier.of("ironmile", "textures/entity/car3_lights_brake.png");
+	private static final Identifier REVERSE_LIGHT_TEXTURE = Identifier.of("ironmile", "textures/entity/car3_lights_reverse.png");
 	private static final ObjMesh BODY_MESH = ObjMesh.load("/assets/ironmile/models/entity/hatchback_body.obj");
 	private static final ObjMesh WHEEL_MESH = ObjMesh.load("/assets/ironmile/models/entity/wheel.obj");
 	private static final float MODEL_SCALE = 0.699F;
@@ -40,16 +39,14 @@ public class CarEntityRenderer extends EntityRenderer<CarEntity> {
 	private static final double WHEEL_FORWARD_OFFSET = 0.95;
 	private static final double WHEEL_SIDE_OFFSET = 0.65;
 	private static final float SUSPENSION_RESPONSE = 0.22F;
-	private static final float MAX_TERRAIN_PITCH = 12.0F;
+	private static final float MAX_TERRAIN_PITCH = 10.0F;
 	private static final float MAX_BODY_ROLL = 10.0F;
-	private static final float MAX_SUSPENSION_TRAVEL = 0.35F;
+	private static final float MAX_SUSPENSION_TRAVEL = 0.30F;
 
-	private final BlockRenderManager blockRenderManager;
 	private final Map<CarEntity, SuspensionState> suspensionStates = new WeakHashMap<>();
 
 	public CarEntityRenderer(EntityRendererFactory.Context context) {
 		super(context);
-		this.blockRenderManager = context.getBlockRenderManager();
 		this.shadowRadius = 1.35F;
 	}
 
@@ -73,6 +70,15 @@ public class CarEntityRenderer extends EntityRenderer<CarEntity> {
 		matrices.push();
 		matrices.scale(MODEL_SCALE, MODEL_SCALE, MODEL_SCALE);
 		this.renderMesh(BODY_MESH, BODY_TEXTURE, matrices, vertexConsumers, light);
+		if (car.areHeadlightsOn()) {
+			this.renderEmissiveMesh(BODY_MESH, HEADLIGHT_TEXTURE, matrices, vertexConsumers);
+		}
+		if (car.isBrakeInputActive()) {
+			this.renderEmissiveMesh(BODY_MESH, BRAKE_LIGHT_TEXTURE, matrices, vertexConsumers);
+		}
+		if (car.isReverseEngaged()) {
+			this.renderEmissiveMesh(BODY_MESH, REVERSE_LIGHT_TEXTURE, matrices, vertexConsumers);
+		}
 
 		float frameWheelRotation = suspension.wheelRotation
 				- (float) Math.toDegrees(suspension.lastForwardSpeed * tickDelta / WHEEL_RADIUS_BLOCKS);
@@ -85,24 +91,6 @@ public class CarEntityRenderer extends EntityRenderer<CarEntity> {
 		this.renderWheel(WHEEL_SIDE, WHEEL_Y, REAR_WHEEL_Z, 0.0F, frameWheelRotation,
 				matrices, vertexConsumers, light);
 		matrices.pop();
-
-		BlockState headlight = car.areHeadlightsOn()
-				? Blocks.SEA_LANTERN.getDefaultState()
-				: Blocks.LIGHT_GRAY_CONCRETE.getDefaultState();
-		BlockState brakeLight = car.isBrakeInputActive()
-				? Blocks.REDSTONE_BLOCK.getDefaultState()
-				: Blocks.RED_CONCRETE.getDefaultState();
-		BlockState reverseLight = car.isReverseEngaged()
-				? Blocks.SEA_LANTERN.getDefaultState()
-				: Blocks.GRAY_CONCRETE.getDefaultState();
-
-		// Local -Z is the front; local +Z is the rear.
-		this.renderBlockPart(headlight, matrices, vertexConsumers, light, -0.61, 0.49, -1.965, 0.17F, 0.095F, 0.03F);
-		this.renderBlockPart(headlight, matrices, vertexConsumers, light, 0.61, 0.49, -1.965, 0.17F, 0.095F, 0.03F);
-		this.renderBlockPart(brakeLight, matrices, vertexConsumers, light, -0.67, 0.52, 1.935, 0.16F, 0.09F, 0.03F);
-		this.renderBlockPart(brakeLight, matrices, vertexConsumers, light, 0.67, 0.52, 1.935, 0.16F, 0.09F, 0.03F);
-		this.renderBlockPart(reverseLight, matrices, vertexConsumers, light, -0.40, 0.52, 1.94, 0.075F, 0.07F, 0.032F);
-		this.renderBlockPart(reverseLight, matrices, vertexConsumers, light, 0.40, 0.52, 1.94, 0.075F, 0.07F, 0.032F);
 		matrices.pop();
 		super.render(car, yaw, tickDelta, matrices, vertexConsumers, light);
 	}
@@ -116,6 +104,16 @@ public class CarEntityRenderer extends EntityRenderer<CarEntity> {
 	) {
 		VertexConsumer consumer = vertexConsumers.getBuffer(RenderLayer.getEntityCutoutNoCull(texture));
 		mesh.render(matrices.peek(), consumer, light);
+	}
+
+	private void renderEmissiveMesh(
+			ObjMesh mesh,
+			Identifier texture,
+			MatrixStack matrices,
+			VertexConsumerProvider vertexConsumers
+	) {
+		VertexConsumer consumer = vertexConsumers.getBuffer(RenderLayer.getEyes(texture));
+		mesh.render(matrices.peek(), consumer, 0x00F000F0);
 	}
 
 	private void renderWheel(
@@ -133,32 +131,6 @@ public class CarEntityRenderer extends EntityRenderer<CarEntity> {
 		matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(steering));
 		matrices.multiply(RotationAxis.POSITIVE_X.rotationDegrees(rotation));
 		this.renderMesh(WHEEL_MESH, WHEEL_TEXTURE, matrices, vertexConsumers, light);
-		matrices.pop();
-	}
-
-	private void renderBlockPart(
-			BlockState state,
-			MatrixStack matrices,
-			VertexConsumerProvider vertexConsumers,
-			int light,
-			double x,
-			double y,
-			double z,
-			float scaleX,
-			float scaleY,
-			float scaleZ
-	) {
-		matrices.push();
-		matrices.translate(x, y, z);
-		matrices.scale(scaleX, scaleY, scaleZ);
-		matrices.translate(-0.5, -0.5, -0.5);
-		this.blockRenderManager.renderBlockAsEntity(
-				state,
-				matrices,
-				vertexConsumers,
-				light,
-				OverlayTexture.DEFAULT_UV
-		);
 		matrices.pop();
 	}
 
@@ -199,14 +171,19 @@ public class CarEntityRenderer extends EntityRenderer<CarEntity> {
 		state.pitch += (terrainPitch + accelerationPitch - state.pitch) * SUSPENSION_RESPONSE;
 		state.roll += (terrainRoll + corneringRoll - state.roll) * SUSPENSION_RESPONSE;
 
-		double heightChange = car.getY() - state.lastEntityY;
-		state.verticalOffset -= (float) MathHelper.clamp(heightChange, -MAX_SUSPENSION_TRAVEL, MAX_SUSPENSION_TRAVEL);
-		state.verticalOffset *= 0.72F;
-		state.verticalOffset = MathHelper.clamp(
-				state.verticalOffset,
+		/*
+		 * Minecraft raises the entity's single collision box as soon as its leading
+		 * edge climbs a slab. Centre the visible chassis around the four wheel
+		 * supports so that lift is not counted a second time by the renderer.
+		 */
+		double averageSupport = (frontLeft + frontRight + rearLeft + rearRight) * 0.25;
+		double bodyBottom = car.getBoundingBox().minY;
+		float targetVerticalOffset = (float) MathHelper.clamp(
+				averageSupport - bodyBottom,
 				-MAX_SUSPENSION_TRAVEL,
-				MAX_SUSPENSION_TRAVEL
+				0.05F
 		);
+		state.verticalOffset += (targetVerticalOffset - state.verticalOffset) * 0.38F;
 
 		state.lastForwardSpeed = signedSpeed;
 		state.wheelRotation = MathHelper.wrapDegrees(
@@ -215,7 +192,6 @@ public class CarEntityRenderer extends EntityRenderer<CarEntity> {
 		float targetSteering = car.getVisualSteeringInput() * MAX_VISUAL_STEERING;
 		state.steeringAngle += (targetSteering - state.steeringAngle) * 0.35F;
 		state.lastYaw = yaw;
-		state.lastEntityY = car.getY();
 		state.lastUpdateTime = worldTime;
 		return state;
 	}
@@ -260,14 +236,12 @@ public class CarEntityRenderer extends EntityRenderer<CarEntity> {
 		private float roll;
 		private float verticalOffset;
 		private float lastYaw;
-		private double lastEntityY;
 		private double lastForwardSpeed;
 		private float wheelRotation;
 		private float steeringAngle;
 
 		private SuspensionState(CarEntity car) {
 			this.lastYaw = car.getYaw();
-			this.lastEntityY = car.getY();
 		}
 	}
 }

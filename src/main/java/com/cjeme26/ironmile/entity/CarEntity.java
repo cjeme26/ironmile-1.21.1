@@ -3,7 +3,11 @@ package com.cjeme26.ironmile.entity;
 import com.cjeme26.ironmile.item.TireItem;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.EntityDimensions;
 import net.minecraft.entity.EntityType;
+import net.minecraft.entity.EntityPose;
+import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.MovementType;
 import net.minecraft.entity.data.DataTracker;
 import net.minecraft.entity.data.TrackedData;
@@ -16,6 +20,7 @@ import net.minecraft.text.Text;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.Hand;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
@@ -75,8 +80,16 @@ public class CarEntity extends BoatEntity {
 	private static final int MAX_COLLISION_STEPS_PER_TICK = 8;
 	private static final double STOP_EPSILON = 0.002;
 
-	private static final double WHEEL_FORWARD_OFFSET = 0.95;
+	private static final double WHEEL_FORWARD_OFFSET = 1.23;
 	private static final double WHEEL_SIDE_OFFSET = 0.65;
+	private static final double BUMPER_FORWARD_OFFSET = 1.82;
+	private static final double BUMPER_SIDE_OFFSET = 0.72;
+	private static final double BUMPER_SENSOR_RADIUS = 0.10;
+	private static final double DRIVER_SEAT_SIDE_OFFSET = 0.32;
+	private static final double DRIVER_SEAT_FORWARD_OFFSET = 0.18;
+	private static final double DRIVER_SEAT_HEIGHT = 0.20;
+	private static final double DISMOUNT_SIDE_OFFSET = 1.38;
+	private static final double DISMOUNT_FORWARD_OFFSET = -0.12;
 	private boolean pressingLeft;
 	private boolean pressingRight;
 	private boolean pressingForward;
@@ -99,6 +112,40 @@ public class CarEntity extends BoatEntity {
 	@Override
 	public float getStepHeight() {
 		return STEP_HEIGHT;
+	}
+
+	/** Places the driver inside the compact hatchback cabin rather than on a boat bench. */
+	@Override
+	protected Vec3d getPassengerAttachmentPos(Entity passenger, EntityDimensions dimensions, float scaleFactor) {
+		return new Vec3d(DRIVER_SEAT_SIDE_OFFSET, DRIVER_SEAT_HEIGHT, DRIVER_SEAT_FORWARD_OFFSET);
+	}
+
+	/**
+	 * Prefer the two doors when leaving the car. Looking toward the bonnet or
+	 * hatch must not place the player inside the long visual body.
+	 */
+	@Override
+	public Vec3d updatePassengerForDismount(LivingEntity passenger) {
+		float yawRadians = this.getYaw() * MathHelper.RADIANS_PER_DEGREE;
+		Vec3d forward = new Vec3d(-MathHelper.sin(yawRadians), 0.0, MathHelper.cos(yawRadians));
+		Vec3d driverSide = new Vec3d(forward.z, 0.0, -forward.x);
+		Vec3d[] sideChoices = {driverSide, driverSide.multiply(-1.0)};
+
+		for (Vec3d side : sideChoices) {
+			Vec3d candidate = new Vec3d(
+					this.getX() + side.x * DISMOUNT_SIDE_OFFSET + forward.x * DISMOUNT_FORWARD_OFFSET,
+					this.getBoundingBox().minY + 0.05,
+					this.getZ() + side.z * DISMOUNT_SIDE_OFFSET + forward.z * DISMOUNT_FORWARD_OFFSET
+			);
+			if (this.getWorld().isSpaceEmpty(
+					passenger,
+					passenger.getDimensions(EntityPose.STANDING).getBoxAt(candidate)
+			)) {
+				return candidate;
+			}
+		}
+
+		return super.updatePassengerForDismount(passenger);
 	}
 
 	@Override
@@ -262,12 +309,56 @@ public class CarEntity extends BoatEntity {
 			Vec3d resolvedStep = raisedForRoadEdge
 					? new Vec3d(movementStep.x, 0.0, movementStep.z)
 					: movementStep;
+			if (this.isBumperBlocked(resolvedStep)) {
+				return true;
+			}
 			this.move(MovementType.SELF, resolvedStep);
 			if (this.horizontalCollision) {
 				return true;
 			}
 		}
 
+		return false;
+	}
+
+	/**
+	 * Minecraft entity dimensions are always axis-aligned, so making the base
+	 * box four blocks long would also make the car four blocks wide. These three
+	 * small oriented probes instead represent the active front or rear bumper.
+	 * Low road edges are ignored here and remain the responsibility of the wheel
+	 * step solver; taller collision shapes stop the car at the visible bumper.
+	 */
+	private boolean isBumperBlocked(Vec3d movementStep) {
+		if (movementStep.horizontalLengthSquared() < 0.000001) {
+			return false;
+		}
+
+		float yawRadians = this.getYaw() * MathHelper.RADIANS_PER_DEGREE;
+		Vec3d forward = new Vec3d(-MathHelper.sin(yawRadians), 0.0, MathHelper.cos(yawRadians));
+		Vec3d side = new Vec3d(forward.z, 0.0, -forward.x);
+		double direction = movementStep.x * forward.x + movementStep.z * forward.z >= 0.0 ? 1.0 : -1.0;
+		double bodyBottom = this.getBoundingBox().minY;
+
+		for (double sideOffset : new double[] {-BUMPER_SIDE_OFFSET, 0.0, BUMPER_SIDE_OFFSET}) {
+			double x = this.getX() + movementStep.x
+					+ forward.x * BUMPER_FORWARD_OFFSET * direction + side.x * sideOffset;
+			double z = this.getZ() + movementStep.z
+					+ forward.z * BUMPER_FORWARD_OFFSET * direction + side.z * sideOffset;
+			Box probe = new Box(
+					x - BUMPER_SENSOR_RADIUS,
+					bodyBottom + 0.08,
+					z - BUMPER_SENSOR_RADIUS,
+					x + BUMPER_SENSOR_RADIUS,
+					bodyBottom + 0.82,
+					z + BUMPER_SENSOR_RADIUS
+			);
+
+			for (VoxelShape collision : this.getWorld().getBlockCollisions(this, probe)) {
+				if (collision.getBoundingBox().maxY > bodyBottom + STEP_HEIGHT + 0.02) {
+					return true;
+				}
+			}
+		}
 		return false;
 	}
 
@@ -281,7 +372,7 @@ public class CarEntity extends BoatEntity {
 		double directionZ = movementStep.z / horizontalDistance;
 		double sideX = directionZ;
 		double sideZ = -directionX;
-		double leadingDistance = 0.90 + horizontalDistance;
+		double leadingDistance = WHEEL_FORWARD_OFFSET + horizontalDistance;
 		double bodyBottom = this.getBoundingBox().minY;
 
 		double leftSupport = this.getRoadSupportHeight(

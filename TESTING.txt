@@ -1,32 +1,39 @@
-IRON MILE — MILESTONE 10.0.1 RENDER CORRECTION
+IRON MILE — MILESTONE 10.1.1 COLLISION AND SYNCHRONIZATION
 
 Install from the Iron Mile project folder:
 
-  ditto "$HOME/Downloads/milestone10-0-1-update" .
+  ditto "$HOME/Downloads/milestone10-1-1-update" .
   ./gradlew clean runClient
 
-This is a small overlay for Milestone 10. Keep the Milestone 10 model and
-texture files already installed in your project.
+Do not commit until the following tests pass.
 
-What changed:
+BUMPER COLLISION
+1. Spawn a fresh car facing a full-block wall.
+2. Drive slowly into it. The visible front bumper should stop near the wall;
+   the bonnet should no longer pass deeply through it.
+3. Reverse into the wall. The visible rear bumper should also stop near it.
+4. Approach the wall at a diagonal and with either bumper corner.
+5. Confirm the car does not stop excessively far away from the wall.
 
-- Corrected OBJ triangles for Minecraft's four-vertex render layer.
-- Removed the long black/yellow stretched shards caused by malformed faces.
-- Reduced and repositioned the temporary headlight, brake-light, and
-  reversing-light overlays so they sit closer to the real lamp clusters.
+SLABS
+6. Drive slowly toward a slab. The front wheels should reach it before the car
+   climbs, and the bonnet should not sink into it.
+7. Stop with only the front wheels raised and inspect the visible wheel contact.
+8. Cross isolated slabs and the earlier 2–6-block slab/gap arrangements.
+9. Repeat at approximately 40, 60 and 90 km/h.
 
-Please check before committing:
+POSITION SYNCHRONIZATION
+10. Drive at least 50 blocks, stop, wait two seconds, then dismount.
+11. Repeat but dismount immediately while the car is still rolling slowly.
+12. Drive, stop and remount several times.
+13. Watch for any jump backward, jump forward, disappearance, or snap back.
+14. Save and quit after driving, reopen the world and verify the saved location.
 
-1. Spawn a fresh car and walk around every side.
-2. Confirm there are no stretched spikes, shards, or faces crossing the car.
-3. Confirm the yellow body texture and windows look coherent.
-4. Drive forward and reverse; confirm all four wheels rotate cleanly.
-5. Steer left and right; confirm the front wheels visibly steer.
-6. Press H and test headlights, braking lights, and reversing lights.
-7. Mount and dismount, then check the player position.
-8. Drive close to a full-block wall and report whether the visible car passes
-   too far into it. Visual length-aware collision will be handled separately
-   if necessary.
+REGRESSION
+15. Check steering, wheel animation, suspension, grip, transmission and audio.
+16. Check all emissive light combinations and dynamic illumination.
+17. Confirm door-side dismounting still works.
 
-Do not commit this correction until those checks pass. If Gradle reports an
-error, copy the complete error text.
+If teleporting remains, note whether it happens while mounted, exactly when
+pressing Shift, a moment after dismounting, or after saving/reloading. A short
+screen recording would also make the remaining trigger much easier to isolate.

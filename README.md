@@ -139,6 +139,29 @@ An experimental Fabric vehicle mod for Minecraft 1.21.1.
 - Front, brake and reversing lamp overlays were reduced and moved closer to the
   hatchback's original textured lamp clusters.
 
+### Milestone 10.1 model integration
+
+- Replaced the temporary block-shaped lamps with emissive texture overlays
+  made for the Car 3 UV map.
+- Headlights, brake lights and reversing lights can illuminate independently
+  or in combination.
+- Kept LambDynamicLights responsible for seamless environmental illumination.
+- Added fixed door-side dismount candidates so looking toward the bonnet no
+  longer places the player inside it.
+- Moved the driver attachment point into the compact hatchback cabin.
+- Centred the rendered chassis between four sampled wheel-support heights to
+  reduce slab hovering while retaining restrained pitch and roll.
+
+### Milestone 10.1.1 collision and synchronization
+
+- Added three orientation-aware collision probes across the active front or
+  rear bumper, matching the long visual body without creating a four-block-wide
+  square hitbox.
+- Bumper probes ignore climbable road edges but stop at full-height walls.
+- Moved road-support sampling to the hatchback's visible wheelbase.
+- Added explicit driver-state synchronization so the server retains the latest
+  validated car position and yaw before dismounting.
+
 ## Milestone 9.2: smooth dynamic headlights
 
 - Headlight illumination now uses LambDynamicLights instead of temporary
