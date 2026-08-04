@@ -23,6 +23,7 @@ import java.util.Locale;
 
 public class IronMileClient implements ClientModInitializer {
 	private static KeyBinding toggleHeadlightsKey;
+	private static int lastControlledCarId = -1;
 
 	@Override
 	public void onInitializeClient() {
@@ -36,17 +37,32 @@ public class IronMileClient implements ClientModInitializer {
 		EntityRendererRegistry.register(ModEntities.HEADLIGHT_MARKER, EmptyEntityRenderer::new);
 		ClientTickEvents.END_CLIENT_TICK.register(EngineSoundManager::tick);
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
-			if (client.player == null || !(client.player.getVehicle() instanceof CarEntity car)) {
+			if (client.player == null) {
+				lastControlledCarId = -1;
 				return;
 			}
-			int inputMask = 0;
-			if (client.options.leftKey.isPressed()) inputMask |= CarInputPayload.LEFT;
-			if (client.options.rightKey.isPressed()) inputMask |= CarInputPayload.RIGHT;
-			if (client.options.forwardKey.isPressed()) inputMask |= CarInputPayload.FORWARD;
-			if (client.options.backKey.isPressed()) inputMask |= CarInputPayload.BACK;
-			ClientPlayNetworking.send(new CarInputPayload(
-					car.getId(), inputMask, car.getX(), car.getY(), car.getZ(), car.getYaw()
-			));
+
+			if (client.player.getVehicle() instanceof CarEntity car) {
+				int inputMask = 0;
+				if (client.options.leftKey.isPressed()) inputMask |= CarInputPayload.LEFT;
+				if (client.options.rightKey.isPressed()) inputMask |= CarInputPayload.RIGHT;
+				if (client.options.forwardKey.isPressed()) inputMask |= CarInputPayload.FORWARD;
+				if (client.options.backKey.isPressed()) inputMask |= CarInputPayload.BACK;
+
+				lastControlledCarId = car.getId();
+				ClientPlayNetworking.send(new CarInputPayload(car.getId(), inputMask));
+				return;
+			}
+
+			/*
+			 * Send one explicit neutral state on the first tick after dismounting.
+			 * Without this, releasing control while A or D is held can leave the
+			 * server with the final steering packet indefinitely.
+			 */
+			if (lastControlledCarId != -1) {
+				ClientPlayNetworking.send(new CarInputPayload(lastControlledCarId, 0));
+				lastControlledCarId = -1;
+			}
 		});
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
 			while (toggleHeadlightsKey.wasPressed()) {

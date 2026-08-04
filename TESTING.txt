@@ -1,39 +1,40 @@
-IRON MILE — MILESTONE 10.1.1 COLLISION AND SYNCHRONIZATION
+IRON MILE — MILESTONE 10.1.3 DISMOUNT INPUT RELEASE
 
 Install from the Iron Mile project folder:
 
-  ditto "$HOME/Downloads/milestone10-1-1-update" .
+  ditto "$HOME/Downloads/ironmile-milestone10-1-3-update" .
   ./gradlew clean runClient
 
 Do not commit until the following tests pass.
 
-BUMPER COLLISION
-1. Spawn a fresh car facing a full-block wall.
-2. Drive slowly into it. The visible front bumper should stop near the wall;
-   the bonnet should no longer pass deeply through it.
-3. Reverse into the wall. The visible rear bumper should also stop near it.
-4. Approach the wall at a diagonal and with either bumper corner.
-5. Confirm the car does not stop excessively far away from the wall.
+PRIMARY TELEPORT TEST
+1. Spawn a fresh car and drive for at least 20 seconds.
+2. While the car is moving slowly, hold A and press Shift without releasing A.
+3. Stand still and watch the car for at least 20 seconds.
+4. Repeat step 2 with D instead of A.
+5. Repeat while stopped completely but still holding A or D during dismount.
+6. Repeat the four tests at least five times each.
+7. Confirm the car never jumps backward, forward, away, or away and back.
 
-SLABS
-6. Drive slowly toward a slab. The front wheels should reach it before the car
-   climbs, and the bonnet should not sink into it.
-7. Stop with only the front wheels raised and inspect the visible wheel contact.
-8. Cross isolated slabs and the earlier 2–6-block slab/gap arrangements.
-9. Repeat at approximately 40, 60 and 90 km/h.
+CONTROL-RELEASE TEST
+8. Dismount while holding W, S, A, and D separately.
+9. Remount after each test and confirm no old key remains active.
+10. Confirm the front wheels return to their neutral visual angle when empty.
+11. Confirm brake or reverse lamps do not remain active after leaving the car.
 
-POSITION SYNCHRONIZATION
-10. Drive at least 50 blocks, stop, wait two seconds, then dismount.
-11. Repeat but dismount immediately while the car is still rolling slowly.
-12. Drive, stop and remount several times.
-13. Watch for any jump backward, jump forward, disappearance, or snap back.
-14. Save and quit after driving, reopen the world and verify the saved location.
+NORMAL DISMOUNT TEST
+12. Drive at least 50 blocks, stop, wait two seconds, then dismount.
+13. Dismount immediately while rolling slowly without holding a steering key.
+14. Mount, drive, and dismount ten times in succession.
+15. Save and reopen the world and verify the car remains where it was left.
 
 REGRESSION
-15. Check steering, wheel animation, suspension, grip, transmission and audio.
-16. Check all emissive light combinations and dynamic illumination.
-17. Confirm door-side dismounting still works.
+16. Confirm W/A/S/D still drive and steer normally.
+17. Test front, rear, and diagonal wall collisions.
+18. Confirm slabs remain climbable.
+19. Check wheel animation, suspension, engine audio, HUD, and door dismounting.
+20. Check headlights, brake lights, reversing lights, and LambDynamicLights.
 
-If teleporting remains, note whether it happens while mounted, exactly when
-pressing Shift, a moment after dismounting, or after saving/reloading. A short
-screen recording would also make the remaining trigger much easier to isolate.
+If teleporting remains, record whether it occurs only while A/D is held, the
+approximate delay in seconds, whether the car is still moving, and whether it
+returns to the exact point where the player first mounted or a more recent point.

@@ -42,15 +42,17 @@ public class IronMile implements ModInitializer {
 		});
 		ServerPlayNetworking.registerGlobalReceiver(CarInputPayload.ID, (payload, context) -> {
 			var entity = context.player().getWorld().getEntityById(payload.entityId());
-			if (entity instanceof com.cjeme26.ironmile.entity.CarEntity car
-					&& car.getControllingPassenger() == context.player()) {
+			if (!(entity instanceof com.cjeme26.ironmile.entity.CarEntity car)) {
+				return;
+			}
+
+			boolean isCurrentDriver = car.getControllingPassenger() == context.player();
+			boolean isNearbyDismountRelease = payload.inputMask() == 0
+					&& !car.hasControllingPassenger()
+					&& car.squaredDistanceTo(context.player()) <= 25.0;
+
+			if (isCurrentDriver || isNearbyDismountRelease) {
 				car.setInputs(payload.left(), payload.right(), payload.forward(), payload.back());
-				// Keep the server copy current with the predicting driver. The distance
-				// guard rejects malformed jumps while tolerating a few delayed ticks.
-				if (car.squaredDistanceTo(payload.x(), payload.y(), payload.z()) <= 64.0) {
-					car.setPosition(payload.x(), payload.y(), payload.z());
-					car.setYaw(payload.yaw());
-				}
 			}
 		});
 		LOGGER.info("Iron Mile prototype initialized");

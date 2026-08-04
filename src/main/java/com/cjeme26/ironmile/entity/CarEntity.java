@@ -194,6 +194,16 @@ public class CarEntity extends BoatEntity {
 		this.pressingBack = pressingBack;
 	}
 
+	private void clearInputs() {
+		this.setInputs(false, false, false, false);
+	}
+
+	@Override
+	protected void removePassenger(Entity passenger) {
+		super.removePassenger(passenger);
+		this.clearInputs();
+	}
+
 	/** Prevents the inherited boat networking from enabling paddle animation/sounds. */
 	@Override
 	public void setPaddleMovings(boolean leftMoving, boolean rightMoving) {
@@ -202,6 +212,14 @@ public class CarEntity extends BoatEntity {
 
 	@Override
 	public void tick() {
+		/*
+		 * Input is meaningful only while a driver controls the car. Clearing it
+		 * here is a server-side safety net for packet ordering during dismount.
+		 */
+		if (!this.hasControllingPassenger()) {
+			this.clearInputs();
+		}
+
 		if (!this.getWorld().isClient) {
 			this.updateHeadlightMarker((ServerWorld) this.getWorld());
 		}

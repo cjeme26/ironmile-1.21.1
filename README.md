@@ -162,6 +162,26 @@ An experimental Fabric vehicle mod for Minecraft 1.21.1.
 - Added explicit driver-state synchronization so the server retains the latest
   validated car position and yaw before dismounting.
 
+### Milestone 10.1.2 movement synchronization correction
+
+- Reduced the custom car-input packet to the driver's WASD state only.
+- Left position and yaw synchronization to Minecraft's existing ridden-vehicle
+  networking instead of applying a second independently timed coordinate update.
+- Removed the delayed custom position write that could restore an older car
+  location during or shortly after dismounting.
+- Bumper collision, slab climbing, steering, lighting and drivetrain behavior
+  are otherwise unchanged.
+
+### Milestone 10.1.3 dismount input release
+
+- Sends one final neutral control packet immediately after the client dismounts.
+- Clears all stored throttle and steering inputs when a passenger is removed.
+- Adds a server-side per-tick safety clear whenever the car has no driver.
+- Accepts only a nearby neutral release after dismount, while normal driving
+  packets still require the player to be the current controlling passenger.
+- Position synchronization, collision, lights, drivetrain and rendering remain
+  otherwise unchanged so the delayed rollback can be tested in isolation.
+
 ## Milestone 9.2: smooth dynamic headlights
 
 - Headlight illumination now uses LambDynamicLights instead of temporary

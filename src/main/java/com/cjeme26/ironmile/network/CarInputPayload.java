@@ -9,11 +9,7 @@ import net.minecraft.network.packet.CustomPayload;
 /** Sends the controlling player's current WASD state to server simulation. */
 public record CarInputPayload(
 		int entityId,
-		int inputMask,
-		double x,
-		double y,
-		double z,
-		float yaw
+		int inputMask
 ) implements CustomPayload {
 	public static final int LEFT = 1;
 	public static final int RIGHT = 2;
@@ -26,14 +22,6 @@ public record CarInputPayload(
 			CarInputPayload::entityId,
 			PacketCodecs.INTEGER,
 			CarInputPayload::inputMask,
-			PacketCodecs.DOUBLE,
-			CarInputPayload::x,
-			PacketCodecs.DOUBLE,
-			CarInputPayload::y,
-			PacketCodecs.DOUBLE,
-			CarInputPayload::z,
-			PacketCodecs.FLOAT,
-			CarInputPayload::yaw,
 			CarInputPayload::new
 	);
 
