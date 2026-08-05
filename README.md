@@ -216,6 +216,19 @@ using a built Iron Mile jar should install LambDynamicLights separately.
   replace road blocks, walls, fluids, or other occupied spaces.
 - Milestone 9's visible front, brake, and reversing lamps remain unchanged.
 
+
+## Milestone 10.2.0: server-authoritative movement
+
+- The server is now the only side allowed to calculate and apply vehicle movement.
+- The inherited boat no longer sends vanilla client-owned vehicle positions.
+- Clients keep BoatEntity interpolation and passenger handling, but do not run
+  Iron Mile road physics or decide the real car position.
+- Gear, RPM, reverse, braking, steering, grip, surface, and road-condition state
+  are synchronized from the server so the HUD, lamps, audio, and wheel animation
+  can continue working during the networking transition.
+- This is the first framework checkpoint. Client prediction and reconciliation
+  are intentionally deferred to later milestones.
+
 ## Prototype milestone 6
 
 - The prototype vehicle appears as a long iron box.
@@ -286,3 +299,32 @@ Build the distributable mod with `./gradlew build`.
 ## License
 
 This template is available under the CC0 license. Feel free to learn from it and incorporate it in your own projects.
+
+### Milestone 10.2.0.1: authoritative collision contact correction
+
+- Replaces BoatEntity's ten-tick client position delay with one-step updates for
+  Iron Mile vehicles, keeping the rendered body close to the server-owned
+  collision position at road speed.
+- Keeps the server as the only authority over movement; no client position is
+  sent back to the server.
+- When a bumper probe finds a wall, a short binary search moves the car to the
+  final safe point instead of discarding the entire collision substep.
+- Stops horizontal velocity at confirmed bumper contact instead of repeatedly
+  damping speed while the visible car appears to remain away from the wall.
+- Bumper dimensions, slab climbing, road sampling, drivetrain, lighting,
+  suspension, audio, and the authoritative movement ownership are unchanged.
+
+### Milestone 10.2.0.2: stable authoritative contact smoothing
+
+- Uses a two-tick client interpolation buffer instead of the one-tick correction
+  from 10.2.0.1, reducing visible position and yaw jitter while keeping the
+  rendered car substantially closer to the server-owned position than vanilla
+  boat interpolation.
+- Remembers whether the front or rear bumper has reached an obstacle.
+- While the driver continues holding throttle into that same obstacle, the
+  server holds the car at rest instead of rebuilding velocity and colliding
+  again every tick.
+- Reverse remains available immediately, and the remembered contact clears as
+  soon as the relevant bumper has room to move.
+- Precise bumper contact, server-authoritative movement, slabs, drivetrain,
+  lighting, suspension, HUD, and audio remain otherwise unchanged.

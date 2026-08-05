@@ -1,0 +1,10 @@
+IronMile exit-braking follow-up patch
+
+Behavior:
+- At or below 10 km/h, exiting stops the car immediately.
+- Above 10 km/h, a strong speed-scaled parking brake slows it quickly.
+- Entering the car cancels the automatic exit brake.
+
+Apply from the project root:
+  ditto -x -k "$HOME/Downloads/IronMile-exit-braking-patch.zip" .
+  ./gradlew clean runClient

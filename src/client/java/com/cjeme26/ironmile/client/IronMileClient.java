@@ -36,7 +36,7 @@ public class IronMileClient implements ClientModInitializer {
 		EntityRendererRegistry.register(ModEntities.CAR, CarEntityRenderer::new);
 		EntityRendererRegistry.register(ModEntities.HEADLIGHT_MARKER, EmptyEntityRenderer::new);
 		ClientTickEvents.END_CLIENT_TICK.register(EngineSoundManager::tick);
-		ClientTickEvents.END_CLIENT_TICK.register(client -> {
+		ClientTickEvents.START_CLIENT_TICK.register(client -> {
 			if (client.player == null) {
 				lastControlledCarId = -1;
 				return;
@@ -49,6 +49,13 @@ public class IronMileClient implements ClientModInitializer {
 				if (client.options.forwardKey.isPressed()) inputMask |= CarInputPayload.FORWARD;
 				if (client.options.backKey.isPressed()) inputMask |= CarInputPayload.BACK;
 
+				/* Apply input before the client world tick for immediate local prediction. */
+				car.setInputs(
+						(inputMask & CarInputPayload.LEFT) != 0,
+						(inputMask & CarInputPayload.RIGHT) != 0,
+						(inputMask & CarInputPayload.FORWARD) != 0,
+						(inputMask & CarInputPayload.BACK) != 0
+				);
 				lastControlledCarId = car.getId();
 				ClientPlayNetworking.send(new CarInputPayload(car.getId(), inputMask));
 				return;

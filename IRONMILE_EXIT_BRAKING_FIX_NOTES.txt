@@ -1,0 +1,12 @@
+IronMile high-speed exit braking fix
+
+Root cause fixed:
+- The exit-braking flag was set after dismounting, but the braking calculation
+  was inside applyThrottleAndBrakes(), which only runs while a driver is seated.
+- The unoccupied car therefore used ordinary rolling resistance instead.
+
+New behavior:
+- At or below 10 km/h: stop immediately.
+- Above 10 km/h: remove about 22% of remaining forward speed each tick, with a
+  minimum braking force, then snap to rest at 10 km/h.
+- Even close to maximum speed, the car should stop in roughly half a second.

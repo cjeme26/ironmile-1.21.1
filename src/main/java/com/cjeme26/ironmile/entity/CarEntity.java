@@ -32,8 +32,8 @@ import net.minecraft.server.world.ServerWorld;
  * The second Iron Mile vehicle prototype: simple road-focused movement.
  *
  * <p>We still inherit BoatEntity temporarily for its proven passenger and
- * keyboard-input plumbing, but the controlling player's movement is calculated
- * here. These constants are deliberately easy to tune after driving tests.</p>
+ * keyboard-input plumbing, but Iron Mile now calculates authoritative movement
+ * on the server. These constants are deliberately easy to tune after tests.</p>
  */
 public class CarEntity extends BoatEntity {
 	private static final TrackedData<Integer> TIRE_TYPE = DataTracker.registerData(
@@ -41,6 +41,50 @@ public class CarEntity extends BoatEntity {
 			TrackedDataHandlerRegistry.INTEGER
 	);
 	private static final TrackedData<Boolean> HEADLIGHTS_ON = DataTracker.registerData(
+			CarEntity.class,
+			TrackedDataHandlerRegistry.BOOLEAN
+	);
+	private static final TrackedData<Integer> SYNCED_GEAR = DataTracker.registerData(
+			CarEntity.class,
+			TrackedDataHandlerRegistry.INTEGER
+	);
+	private static final TrackedData<Integer> SYNCED_ENGINE_RPM = DataTracker.registerData(
+			CarEntity.class,
+			TrackedDataHandlerRegistry.INTEGER
+	);
+	private static final TrackedData<Boolean> SYNCED_SHIFTING = DataTracker.registerData(
+			CarEntity.class,
+			TrackedDataHandlerRegistry.BOOLEAN
+	);
+	private static final TrackedData<Boolean> SYNCED_REVERSE = DataTracker.registerData(
+			CarEntity.class,
+			TrackedDataHandlerRegistry.BOOLEAN
+	);
+	private static final TrackedData<Float> SYNCED_FORWARD_SPEED = DataTracker.registerData(
+			CarEntity.class,
+			TrackedDataHandlerRegistry.FLOAT
+	);
+	private static final TrackedData<Float> SYNCED_GRIP = DataTracker.registerData(
+			CarEntity.class,
+			TrackedDataHandlerRegistry.FLOAT
+	);
+	private static final TrackedData<String> SYNCED_SURFACE = DataTracker.registerData(
+			CarEntity.class,
+			TrackedDataHandlerRegistry.STRING
+	);
+	private static final TrackedData<String> SYNCED_ROAD_CONDITION = DataTracker.registerData(
+			CarEntity.class,
+			TrackedDataHandlerRegistry.STRING
+	);
+	private static final TrackedData<Float> SYNCED_STEERING = DataTracker.registerData(
+			CarEntity.class,
+			TrackedDataHandlerRegistry.FLOAT
+	);
+	private static final TrackedData<Boolean> SYNCED_BRAKING = DataTracker.registerData(
+			CarEntity.class,
+			TrackedDataHandlerRegistry.BOOLEAN
+	);
+	private static final TrackedData<Boolean> SYNCED_THROTTLE = DataTracker.registerData(
 			CarEntity.class,
 			TrackedDataHandlerRegistry.BOOLEAN
 	);
@@ -66,6 +110,10 @@ public class CarEntity extends BoatEntity {
 	private static final double LOW_SPEED_COAST_BRAKE = 0.0024;
 	private static final double REVERSE_COAST_BRAKE_MULTIPLIER = 1.5;
 	private static final double AUTOMATIC_STOP_SPEED = 0.025;
+	/** 1 block/tick is approximately 72 km/h at Minecraft's 20 TPS. */
+	private static final double EXIT_INSTANT_STOP_SPEED = 10.0 / 72.0;
+	private static final double EXIT_BRAKE_MIN_FORCE = 0.035;
+	private static final double EXIT_BRAKE_SPEED_FRACTION = 0.22;
 	private static final double IDLE_RPM = 800.0;
 	private static final double DOWNSHIFT_RPM = 1600.0;
 	private static final double KICKDOWN_RPM = 2300.0;
@@ -79,6 +127,12 @@ public class CarEntity extends BoatEntity {
 	private static final double MAX_COLLISION_STEP_DISTANCE = 0.35;
 	private static final int MAX_COLLISION_STEPS_PER_TICK = 8;
 	private static final double STOP_EPSILON = 0.002;
+	private static final int REMOTE_POSITION_INTERPOLATION_STEPS = 2;
+	private static final double CLIENT_PREDICTION_HARD_CORRECTION_DISTANCE_SQUARED = 16.0;
+	private static final float CLIENT_PREDICTION_HARD_CORRECTION_YAW_DEGREES = 75.0F;
+	private static final int BUMPER_CONTACT_SEARCH_STEPS = 7;
+	private static final double MIN_BUMPER_CONTACT_MOVEMENT = 0.001;
+	private static final double BUMPER_CONTACT_RECHECK_DISTANCE = 0.035;
 
 	private static final double WHEEL_FORWARD_OFFSET = 1.23;
 	private static final double WHEEL_SIDE_OFFSET = 0.65;
@@ -101,8 +155,27 @@ public class CarEntity extends BoatEntity {
 	private int shiftTicksRemaining;
 	private double engineRpm = IDLE_RPM;
 	private double lastForwardSpeed;
+	private boolean exitBrakingActive;
 	private boolean reverseEngaged;
+	/** 1 = front bumper held against an obstacle, -1 = rear, 0 = clear. */
+	private int bumperContactDirection;
 	private HeadlightMarkerEntity headlightMarker;
+
+	/*
+	 * The server always remains authoritative, but the local driver's client also
+	 * runs the same road simulation for immediate visual response. Routine server
+	 * snapshots are recorded while prediction is active instead of pulling the car
+	 * backwards every tick. Remote cars continue to use server interpolation.
+	 */
+	private boolean clientPredictionActive;
+	private boolean clientHasAuthoritativeTransform;
+	private double clientAuthoritativeX;
+	private double clientAuthoritativeY;
+	private double clientAuthoritativeZ;
+	private float clientAuthoritativeYaw;
+	private float clientAuthoritativePitch;
+	private boolean clientHasAuthoritativeVelocity;
+	private Vec3d clientAuthoritativeVelocity = Vec3d.ZERO;
 
 	public CarEntity(EntityType<? extends BoatEntity> entityType, World world) {
 		super(entityType, world);
@@ -153,6 +226,17 @@ public class CarEntity extends BoatEntity {
 		super.initDataTracker(builder);
 		builder.add(TIRE_TYPE, TireType.ALL_SEASON.ordinal());
 		builder.add(HEADLIGHTS_ON, false);
+		builder.add(SYNCED_GEAR, 1);
+		builder.add(SYNCED_ENGINE_RPM, (int) IDLE_RPM);
+		builder.add(SYNCED_SHIFTING, false);
+		builder.add(SYNCED_REVERSE, false);
+		builder.add(SYNCED_FORWARD_SPEED, 0.0F);
+		builder.add(SYNCED_GRIP, 1.0F);
+		builder.add(SYNCED_SURFACE, "Road");
+		builder.add(SYNCED_ROAD_CONDITION, "Dry");
+		builder.add(SYNCED_STEERING, 0.0F);
+		builder.add(SYNCED_BRAKING, false);
+		builder.add(SYNCED_THROTTLE, false);
 	}
 
 	@Override
@@ -202,6 +286,20 @@ public class CarEntity extends BoatEntity {
 	protected void removePassenger(Entity passenger) {
 		super.removePassenger(passenger);
 		this.clearInputs();
+
+		/*
+		 * Treat leaving the driver's seat like applying a parking brake. At walking
+		 * speed the car stops immediately; faster exits preserve a short, speed-scaled
+		 * roll instead of coasting for several seconds.
+		 */
+		double horizontalSpeed = this.getVelocity().horizontalLength();
+		if (horizontalSpeed <= EXIT_INSTANT_STOP_SPEED) {
+			this.setVelocity(0.0, this.getVelocity().y, 0.0);
+			this.lastForwardSpeed = 0.0;
+			this.exitBrakingActive = false;
+		} else {
+			this.exitBrakingActive = true;
+		}
 	}
 
 	/** Prevents the inherited boat networking from enabling paddle animation/sounds. */
@@ -210,32 +308,172 @@ public class CarEntity extends BoatEntity {
 		// Intentionally empty: Iron Mile cars do not have paddles.
 	}
 
+	/**
+	 * Iron Mile deliberately makes the server the only logical movement side.
+	 * This also stops the vanilla client from sending VehicleMoveC2SPacket data
+	 * for the inherited boat, so dismounting no longer changes who owns position.
+	 */
+	@Override
+	public boolean isLogicalSideForUpdatingMovement() {
+		return !this.getWorld().isClient;
+	}
+
+	/**
+	 * Remote cars use a short interpolation step. The locally controlled car does
+	 * not consume routine position snapshots while prediction is active, otherwise
+	 * every server update would visibly pull it toward an older position.
+	 */
+	@Override
+	public void updateTrackedPositionAndAngles(
+			double x,
+			double y,
+			double z,
+			float yaw,
+			float pitch,
+			int interpolationSteps
+	) {
+		if (!this.getWorld().isClient) {
+			super.updateTrackedPositionAndAngles(x, y, z, yaw, pitch, interpolationSteps);
+			return;
+		}
+
+		this.clientHasAuthoritativeTransform = true;
+		this.clientAuthoritativeX = x;
+		this.clientAuthoritativeY = y;
+		this.clientAuthoritativeZ = z;
+		this.clientAuthoritativeYaw = yaw;
+		this.clientAuthoritativePitch = pitch;
+
+		if (this.isLocallyControlledClient()) {
+			double positionErrorSquared = this.squaredDistanceTo(x, y, z);
+			float yawError = Math.abs(MathHelper.wrapDegrees(yaw - this.getYaw()));
+			if (!this.clientPredictionActive
+					|| positionErrorSquared > CLIENT_PREDICTION_HARD_CORRECTION_DISTANCE_SQUARED
+					|| yawError > CLIENT_PREDICTION_HARD_CORRECTION_YAW_DEGREES) {
+				this.setPosition(x, y, z);
+				this.setRotation(yaw, pitch);
+			}
+			return;
+		}
+
+		this.lerpPosAndRotation(REMOTE_POSITION_INTERPOLATION_STEPS, x, y, z, yaw, pitch);
+	}
+
+	/**
+	 * Velocity packets are useful for remote cars, audio, and a newly mounted car.
+	 * Once local prediction is running, accepting them every tick would overwrite
+	 * the velocity that the client just calculated and recreate the hitching.
+	 */
+	@Override
+	public void setVelocityClient(double x, double y, double z) {
+		this.clientHasAuthoritativeVelocity = true;
+		this.clientAuthoritativeVelocity = new Vec3d(x, y, z);
+		if (this.getWorld().isClient && this.isLocallyControlledClient() && this.clientPredictionActive) {
+			return;
+		}
+		super.setVelocityClient(x, y, z);
+	}
+
 	@Override
 	public void tick() {
-		/*
-		 * Input is meaningful only while a driver controls the car. Clearing it
-		 * here is a server-side safety net for packet ordering during dismount.
-		 */
 		if (!this.hasControllingPassenger()) {
 			this.clearInputs();
 		}
 
-		if (!this.getWorld().isClient) {
-			this.updateHeadlightMarker((ServerWorld) this.getWorld());
-		}
+		if (this.getWorld().isClient) {
+			if (this.isLocallyControlledClient()) {
+				if (!this.clientPredictionActive) {
+					this.beginClientPrediction();
+				}
 
-		/*
-		 * Minecraft lets the controlling client simulate a ridden boat and sends
-		 * the resulting vehicle position to the server. Keeping the inherited tick
-		 * on the other logical side preserves vanilla interpolation and tracking.
-		 */
-		if (!this.isLogicalSideForUpdatingMovement()) {
+				/*
+				 * This mirrors the authoritative server path without making the client a
+				 * logical vanilla boat owner. Consequently Minecraft does not send its
+				 * VehicleMoveC2SPacket, but steering and acceleration are still immediate.
+				 */
+				this.baseTick();
+				this.tickRoadMovement();
+				return;
+			}
+
+			if (this.clientPredictionActive) {
+				this.endClientPrediction();
+			}
+
+			/*
+			 * Keep BoatEntity's passenger handling for unoccupied and remotely driven
+			 * cars. BoatEntity clears velocity on a non-logical side, so restore the
+			 * latest server velocity for rendering, suspension, audio, and the HUD.
+			 */
+			Vec3d synchronizedVelocity = this.getVelocity();
 			super.tick();
+			this.setVelocity(synchronizedVelocity);
 			return;
 		}
 
+		this.updateHeadlightMarker((ServerWorld) this.getWorld());
 		this.baseTick();
 		this.tickRoadMovement();
+		this.syncAuthoritativeState();
+	}
+
+	private boolean isLocallyControlledClient() {
+		return this.getWorld().isClient
+				&& this.getControllingPassenger() instanceof PlayerEntity player
+				&& player.isMainPlayer();
+	}
+
+	private void beginClientPrediction() {
+		this.clientPredictionActive = true;
+
+		/* Seed private drivetrain fields from the latest authoritative tracker data. */
+		this.currentGear = this.dataTracker.get(SYNCED_GEAR);
+		this.engineRpm = this.dataTracker.get(SYNCED_ENGINE_RPM);
+		this.shiftTicksRemaining = this.dataTracker.get(SYNCED_SHIFTING) ? 1 : 0;
+		this.reverseEngaged = this.dataTracker.get(SYNCED_REVERSE);
+		this.lastForwardSpeed = this.dataTracker.get(SYNCED_FORWARD_SPEED);
+		this.currentGrip = this.dataTracker.get(SYNCED_GRIP);
+		this.currentSurfaceName = this.dataTracker.get(SYNCED_SURFACE);
+		this.currentRoadConditionName = this.dataTracker.get(SYNCED_ROAD_CONDITION);
+		this.bumperContactDirection = 0;
+	}
+
+	private void endClientPrediction() {
+		this.clientPredictionActive = false;
+		this.clearInputs();
+
+		/*
+		 * Hand control back to the newest server snapshot. Because the server has
+		 * simulated throughout the drive, this should be a small correction rather
+		 * than the old multi-second rewind/teleport.
+		 */
+		if (this.clientHasAuthoritativeTransform) {
+			this.lerpPosAndRotation(
+					REMOTE_POSITION_INTERPOLATION_STEPS,
+					this.clientAuthoritativeX,
+					this.clientAuthoritativeY,
+					this.clientAuthoritativeZ,
+					this.clientAuthoritativeYaw,
+					this.clientAuthoritativePitch
+			);
+		}
+		if (this.clientHasAuthoritativeVelocity) {
+			this.setVelocity(this.clientAuthoritativeVelocity);
+		}
+	}
+
+	private void syncAuthoritativeState() {
+		this.dataTracker.set(SYNCED_GEAR, this.currentGear);
+		this.dataTracker.set(SYNCED_ENGINE_RPM, (int) Math.round(this.engineRpm));
+		this.dataTracker.set(SYNCED_SHIFTING, this.shiftTicksRemaining > 0);
+		this.dataTracker.set(SYNCED_REVERSE, this.reverseEngaged);
+		this.dataTracker.set(SYNCED_FORWARD_SPEED, (float) this.lastForwardSpeed);
+		this.dataTracker.set(SYNCED_GRIP, (float) this.currentGrip);
+		this.dataTracker.set(SYNCED_SURFACE, this.currentSurfaceName);
+		this.dataTracker.set(SYNCED_ROAD_CONDITION, this.currentRoadConditionName);
+		this.dataTracker.set(SYNCED_STEERING, this.calculateVisualSteeringInput());
+		this.dataTracker.set(SYNCED_BRAKING, this.calculateBrakeInputActive());
+		this.dataTracker.set(SYNCED_THROTTLE, this.pressingForward || this.pressingBack);
 	}
 
 	private void updateHeadlightMarker(ServerWorld world) {
@@ -256,6 +494,9 @@ public class CarEntity extends BoatEntity {
 	}
 
 	private void tickRoadMovement() {
+		if (this.hasPassengers()) {
+			this.exitBrakingActive = false;
+		}
 		Vec3d velocity = this.getVelocity();
 		float yawRadians = this.getYaw() * MathHelper.RADIANS_PER_DEGREE;
 
@@ -266,12 +507,18 @@ public class CarEntity extends BoatEntity {
 		double forwardSpeed = velocity.x * forward.x + velocity.z * forward.z;
 		double sidewaysSpeed = velocity.x * right.x + velocity.z * right.z;
 
+		this.refreshBumperContact(forward);
+
 		if (this.isOnGround()) {
 			this.sampleWheelGrip(forward, right);
 		}
 
 		if (this.hasControllingPassenger() && this.isOnGround()) {
-			forwardSpeed = this.applyThrottleAndBrakes(forwardSpeed, this.currentGrip);
+			if (this.isThrottleHeldAgainstBumper(forwardSpeed)) {
+				forwardSpeed = this.holdAtBumperContact();
+			} else {
+				forwardSpeed = this.applyThrottleAndBrakes(forwardSpeed, this.currentGrip);
+			}
 			this.applySteering(forwardSpeed, this.currentGrip);
 
 			// Recalculate axes after steering so acceleration follows the new heading.
@@ -282,7 +529,16 @@ public class CarEntity extends BoatEntity {
 			// Low-grip surfaces retain more sideways velocity and therefore slide.
 			sidewaysSpeed *= this.getLateralVelocityRetained();
 		} else if (this.isOnGround()) {
-			forwardSpeed *= ROLLING_RESISTANCE;
+			/*
+			 * The exit brake must run in the unoccupied branch. The previous
+			 * implementation set this flag during dismount, but only consumed it
+			 * inside applyThrottleAndBrakes(), which requires a seated driver.
+			 */
+			if (this.exitBrakingActive) {
+				forwardSpeed = this.applyExitParkingBrake(forwardSpeed);
+			} else {
+				forwardSpeed *= ROLLING_RESISTANCE;
+			}
 			sidewaysSpeed *= this.getLateralVelocityRetained();
 		}
 
@@ -304,9 +560,52 @@ public class CarEntity extends BoatEntity {
 		double verticalSpeed = this.isOnGround() ? -GROUNDING_FORCE : velocity.y - GRAVITY;
 
 		this.setVelocity(horizontalX, verticalSpeed, horizontalZ);
-		if (this.moveWithCollisionSubsteps(this.getVelocity())) {
-			this.setVelocity(this.getVelocity().multiply(0.35, 1.0, 0.35));
+		Vec3d attemptedMovement = this.getVelocity();
+		if (this.moveWithCollisionSubsteps(attemptedMovement)) {
+			/*
+			 * Remember which end reached the obstacle. While the driver keeps holding
+			 * throttle into that same obstacle, do not rebuild a small velocity and
+			 * collide again every server tick. Reverse remains immediately available.
+			 */
+			this.bumperContactDirection = this.getMovementDirection(attemptedMovement, forward);
+			this.setVelocity(0.0, this.getVelocity().y, 0.0);
+			this.lastForwardSpeed = 0.0;
 		}
+	}
+
+	private int getMovementDirection(Vec3d movement, Vec3d forward) {
+		double forwardAmount = movement.x * forward.x + movement.z * forward.z;
+		return forwardAmount >= 0.0 ? 1 : -1;
+	}
+
+	/** Clears a remembered contact once the bumper has room to move again. */
+	private void refreshBumperContact(Vec3d forward) {
+		if (this.bumperContactDirection == 0) {
+			return;
+		}
+
+		Vec3d recheckMovement = forward.multiply(
+				BUMPER_CONTACT_RECHECK_DISTANCE * this.bumperContactDirection
+		);
+		if (!this.isBumperBlocked(recheckMovement)) {
+			this.bumperContactDirection = 0;
+		}
+	}
+
+	private boolean isThrottleHeldAgainstBumper(double forwardSpeed) {
+		if (this.bumperContactDirection > 0) {
+			return this.pressingForward && !this.pressingBack && forwardSpeed >= -0.03;
+		}
+		if (this.bumperContactDirection < 0) {
+			return this.pressingBack && !this.pressingForward && forwardSpeed <= 0.03;
+		}
+		return false;
+	}
+
+	private double holdAtBumperContact() {
+		this.lastForwardSpeed = 0.0;
+		this.engineRpm += (IDLE_RPM - this.engineRpm) * 0.35;
+		return 0.0;
 	}
 
 	/**
@@ -328,6 +627,7 @@ public class CarEntity extends BoatEntity {
 					? new Vec3d(movementStep.x, 0.0, movementStep.z)
 					: movementStep;
 			if (this.isBumperBlocked(resolvedStep)) {
+				this.moveUpToBumperContact(resolvedStep);
 				return true;
 			}
 			this.move(MovementType.SELF, resolvedStep);
@@ -337,6 +637,32 @@ public class CarEntity extends BoatEntity {
 		}
 
 		return false;
+	}
+
+	/**
+	 * Finds the final safe fraction of a blocked movement step. Previously the
+	 * complete substep was discarded, which could leave up to one substep of air
+	 * between the visible bumper and a wall. A short binary search gives precise
+	 * contact without requiring many tiny movement steps every tick.
+	 */
+	private void moveUpToBumperContact(Vec3d blockedStep) {
+		double safeFraction = 0.0;
+		double blockedFraction = 1.0;
+
+		for (int search = 0; search < BUMPER_CONTACT_SEARCH_STEPS; search++) {
+			double candidateFraction = (safeFraction + blockedFraction) * 0.5;
+			Vec3d candidateStep = blockedStep.multiply(candidateFraction);
+			if (this.isBumperBlocked(candidateStep)) {
+				blockedFraction = candidateFraction;
+			} else {
+				safeFraction = candidateFraction;
+			}
+		}
+
+		Vec3d safeStep = blockedStep.multiply(safeFraction);
+		if (safeStep.horizontalLengthSquared() > MIN_BUMPER_CONTACT_MOVEMENT * MIN_BUMPER_CONTACT_MOVEMENT) {
+			this.move(MovementType.SELF, safeStep);
+		}
 	}
 
 	/**
@@ -504,8 +830,10 @@ public class CarEntity extends BoatEntity {
 			}
 			speed = this.moveTowardZero(speed, lowSpeedCoastBrake);
 
+
 			if (Math.abs(speed) < AUTOMATIC_STOP_SPEED) {
 				speed = 0.0;
+				this.exitBrakingActive = false;
 			}
 		}
 
@@ -520,6 +848,34 @@ public class CarEntity extends BoatEntity {
 		this.lastForwardSpeed = speed;
 		this.updateEngineRpm(speed, shifting);
 		return speed;
+	}
+
+	/**
+	 * Applies a strong speed-proportional parking brake after the driver exits.
+	 * Cars at or below 10 km/h snap to rest; faster cars shed roughly 22% of
+	 * their remaining forward speed each tick and settle within about half a
+	 * second even near maximum speed.
+	 */
+	private double applyExitParkingBrake(double speed) {
+		if (Math.abs(speed) <= EXIT_INSTANT_STOP_SPEED) {
+			this.exitBrakingActive = false;
+			this.lastForwardSpeed = 0.0;
+			return 0.0;
+		}
+
+		double exitBrake = Math.max(
+				EXIT_BRAKE_MIN_FORCE,
+				Math.abs(speed) * EXIT_BRAKE_SPEED_FRACTION
+		);
+		double brakedSpeed = this.moveTowardZero(speed, exitBrake);
+		if (Math.abs(brakedSpeed) <= EXIT_INSTANT_STOP_SPEED) {
+			this.exitBrakingActive = false;
+			this.lastForwardSpeed = 0.0;
+			return 0.0;
+		}
+
+		this.lastForwardSpeed = brakedSpeed;
+		return brakedSpeed;
 	}
 
 	private void updateAutomaticTransmission(double speed) {
@@ -686,29 +1042,46 @@ public class CarEntity extends BoatEntity {
 		return 1.0 - (1.0 - LATERAL_VELOCITY_RETAINED) * this.currentGrip;
 	}
 
+	private boolean shouldUseSyncedVisualState() {
+		return this.getWorld().isClient && !this.clientPredictionActive;
+	}
+
 	public double getHorizontalSpeedKmh() {
 		// One block is treated as one metre; Minecraft runs at 20 ticks per second.
 		return this.getVelocity().horizontalLength() * 20.0 * 3.6;
 	}
 
 	public int getEngineRpm() {
-		return (int) Math.round(this.engineRpm / 50.0) * 50;
+		double rpm = this.shouldUseSyncedVisualState() ? this.dataTracker.get(SYNCED_ENGINE_RPM) : this.engineRpm;
+		return (int) Math.round(rpm / 50.0) * 50;
 	}
 
 	public boolean hasThrottleInput() {
-		return this.pressingForward || this.pressingBack;
+		return this.shouldUseSyncedVisualState()
+				? this.dataTracker.get(SYNCED_THROTTLE)
+				: this.pressingForward || this.pressingBack;
 	}
 
 	public boolean isChangingGear() {
-		return this.shiftTicksRemaining > 0;
+		return this.shouldUseSyncedVisualState()
+				? this.dataTracker.get(SYNCED_SHIFTING)
+				: this.shiftTicksRemaining > 0;
 	}
 
 	public boolean isReverseEngaged() {
-		return this.reverseEngaged;
+		return this.shouldUseSyncedVisualState()
+				? this.dataTracker.get(SYNCED_REVERSE)
+				: this.reverseEngaged;
 	}
 
-	/** Client-side steering input used only to animate the front wheels. */
+	/** Server-synchronized steering input used to animate every client's front wheels. */
 	public float getVisualSteeringInput() {
+		return this.shouldUseSyncedVisualState()
+				? this.dataTracker.get(SYNCED_STEERING)
+				: this.calculateVisualSteeringInput();
+	}
+
+	private float calculateVisualSteeringInput() {
 		if (this.pressingLeft == this.pressingRight) {
 			return 0.0F;
 		}
@@ -716,6 +1089,12 @@ public class CarEntity extends BoatEntity {
 	}
 
 	public boolean isBrakeInputActive() {
+		return this.shouldUseSyncedVisualState()
+				? this.dataTracker.get(SYNCED_BRAKING)
+				: this.calculateBrakeInputActive();
+	}
+
+	private boolean calculateBrakeInputActive() {
 		return (this.lastForwardSpeed > 0.03 && this.pressingBack)
 				|| (this.lastForwardSpeed < -0.03 && this.pressingForward);
 	}
@@ -729,25 +1108,40 @@ public class CarEntity extends BoatEntity {
 	}
 
 	public String getGearDisplay() {
-		if (this.shiftTicksRemaining > 0) {
+		boolean shifting = this.shouldUseSyncedVisualState()
+				? this.dataTracker.get(SYNCED_SHIFTING)
+				: this.shiftTicksRemaining > 0;
+		boolean reverse = this.shouldUseSyncedVisualState()
+				? this.dataTracker.get(SYNCED_REVERSE)
+				: this.reverseEngaged;
+		double forwardSpeed = this.shouldUseSyncedVisualState()
+				? this.dataTracker.get(SYNCED_FORWARD_SPEED)
+				: this.lastForwardSpeed;
+		int gear = this.shouldUseSyncedVisualState()
+				? this.dataTracker.get(SYNCED_GEAR)
+				: this.currentGear;
+
+		if (shifting) {
 			return "N";
 		}
-		if (this.reverseEngaged || this.lastForwardSpeed < -0.01) {
+		if (reverse || forwardSpeed < -0.01) {
 			return "R";
 		}
-		return "D" + this.currentGear;
+		return "D" + gear;
 	}
 
 	public double getCurrentGrip() {
-		return this.currentGrip;
+		return this.shouldUseSyncedVisualState() ? this.dataTracker.get(SYNCED_GRIP) : this.currentGrip;
 	}
 
 	public String getCurrentSurfaceName() {
-		return this.currentSurfaceName;
+		return this.shouldUseSyncedVisualState() ? this.dataTracker.get(SYNCED_SURFACE) : this.currentSurfaceName;
 	}
 
 	public String getCurrentRoadConditionName() {
-		return this.currentRoadConditionName;
+		return this.shouldUseSyncedVisualState()
+				? this.dataTracker.get(SYNCED_ROAD_CONDITION)
+				: this.currentRoadConditionName;
 	}
 
 	public TireType getTireType() {
