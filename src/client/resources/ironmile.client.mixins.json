@@ -4,7 +4,9 @@
 	"compatibilityLevel": "JAVA_21",
 	"client": [
 		"ExampleClientMixin",
-		"PlayerEntityRendererMixin"
+		"PlayerEntityRendererMixin",
+		"CameraMixin",
+		"HeldItemRendererMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1
