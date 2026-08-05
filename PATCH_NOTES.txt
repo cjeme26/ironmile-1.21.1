@@ -1,0 +1,4 @@
+Iron Mile – Yellow Hatchback name correction
+
+Changes the car item and entity display names from "Iron Mile Hatchback" to "Yellow Hatchback".
+The creative inventory tab remains named "Iron Mile".
