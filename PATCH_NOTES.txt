@@ -1,4 +1,13 @@
-Iron Mile – Yellow Hatchback name correction
+Iron Mile creative-tab repair patch
 
-Changes the car item and entity display names from "Iron Mile Hatchback" to "Yellow Hatchback".
-The creative inventory tab remains named "Iron Mile".
+This patch adds the missing ModItemGroups.java file and registers the custom
+Iron Mile creative inventory tab during common mod initialization.
+
+The tab uses the Yellow Hatchback item as its icon and contains:
+- Yellow Hatchback
+- Summer Tires
+- All-Season Tires
+- Winter Tires
+
+It also removes the same items from Minecraft's generic Tools tab so they are
+not duplicated.

@@ -4,6 +4,7 @@ import net.fabricmc.api.ModInitializer;
 
 import com.cjeme26.ironmile.entity.ModEntities;
 import com.cjeme26.ironmile.item.ModItems;
+import com.cjeme26.ironmile.item.ModItemGroups;
 import com.cjeme26.ironmile.sound.ModSounds;
 import com.cjeme26.ironmile.network.HeadlightTogglePayload;
 import com.cjeme26.ironmile.network.CarInputPayload;
@@ -30,6 +31,7 @@ public class IronMile implements ModInitializer {
 		ModBlocks.initialize();
 		ModEntities.initialize();
 		ModItems.initialize();
+		ModItemGroups.initialize();
 		ModSounds.initialize();
 		PayloadTypeRegistry.playC2S().register(HeadlightTogglePayload.ID, HeadlightTogglePayload.CODEC);
 		PayloadTypeRegistry.playC2S().register(CarInputPayload.ID, CarInputPayload.CODEC);

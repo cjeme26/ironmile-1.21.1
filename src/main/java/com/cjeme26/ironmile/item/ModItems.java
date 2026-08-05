@@ -2,9 +2,7 @@ package com.cjeme26.ironmile.item;
 
 import com.cjeme26.ironmile.IronMile;
 import com.cjeme26.ironmile.entity.CarEntity;
-import net.fabricmc.fabric.api.itemgroup.v1.ItemGroupEvents;
 import net.minecraft.item.Item;
-import net.minecraft.item.ItemGroups;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.Registry;
 
@@ -22,13 +20,7 @@ public final class ModItems {
 	}
 
 	public static void initialize() {
-		ItemGroupEvents.modifyEntriesEvent(ItemGroups.TOOLS)
-				.register(entries -> {
-					entries.add(CAR);
-					entries.add(SUMMER_TIRES);
-					entries.add(ALL_SEASON_TIRES);
-					entries.add(WINTER_TIRES);
-				});
+		IronMile.LOGGER.info("Registering Iron Mile items");
 	}
 
 	private static Item registerTires(String id, CarEntity.TireType tireType) {
