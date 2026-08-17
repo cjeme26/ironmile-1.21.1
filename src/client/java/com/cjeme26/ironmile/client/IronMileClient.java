@@ -32,8 +32,10 @@ public class IronMileClient implements ClientModInitializer {
 	private static boolean mouseShifterActive = false;
 	private static double shifterX = 0.0;
 	private static double shifterY = 0.0;
-	private static double shifterVelocityX = 0.0;
-	private static double shifterVelocityY = 0.0;
+	private static boolean reverseLockoutLatched = false;
+	private static boolean reverseToggleWasDown = false;
+	private static boolean shifterInVerticalLane = false;
+	private static int neutralSlot = 0; // -1 = 1/2, 0 = 3/4, 1 = 5/6
 	private static int gearAtShiftStart = 0;
 
 	@Override
@@ -112,6 +114,11 @@ public class IronMileClient implements ClientModInitializer {
 				if (!mouseShifterActive) {
 					beginMouseShifter(car);
 				}
+				boolean reverseToggleDown = client.options.attackKey.isPressed();
+				if (reverseToggleDown && !reverseToggleWasDown) {
+					reverseLockoutLatched = !reverseLockoutLatched;
+				}
+				reverseToggleWasDown = reverseToggleDown;
 			} else if (mouseShifterActive) {
 				finishMouseShifter();
 			}
@@ -167,15 +174,6 @@ public class IronMileClient implements ClientModInitializer {
 			if (car.isManualTransmission()) {
 				drawManualGearStick(drawContext, client, car.getSelectedGearDisplay());
 
-				// Temporary diagnostic so we can verify that Minecraft's Use key is
-				// actually reaching the shifter on the user's machine.
-				if (mouseShifterActive || client.options.useKey.isPressed()) {
-					String inputText = "SHIFT INPUT";
-					int inputX = (client.getWindow().getScaledWidth()
-							- client.textRenderer.getWidth(inputText)) / 2;
-					drawContext.drawTextWithShadow(
-							client.textRenderer, Text.literal(inputText), inputX, 28, 0xFFFFD34E);
-				}
 			}
 		});
 	}
@@ -207,16 +205,18 @@ public class IronMileClient implements ClientModInitializer {
 		drawContext.fill(middle, top, middle + 2, bottom + 1, line);
 		drawContext.fill(right, top, right + 2, bottom + 1, line);
 		drawContext.fill(left, neutral, right + 2, neutral + 2, line);
-		drawContext.fill(right + 1, neutral, right + 8, neutral + 2, line);
-		drawContext.fill(right + 7, neutral, right + 9, bottom + 1, line);
 
-		drawContext.drawText(client.textRenderer, Text.literal("1"), left - 3, y + 3, label, false);
+		boolean reverseLockout = reverseLockoutLatched;
+		boolean showingReverse = mouseShifterActive ? reverseLockout : "R".equals(gear);
+		String upperLeftLabel = showingReverse ? "R" : "1";
+		int upperLeftColor = showingReverse ? 0xFFFF5555 : label;
+
+		drawContext.drawText(client.textRenderer, Text.literal(upperLeftLabel), left - 3, y + 3, upperLeftColor, false);
 		drawContext.drawText(client.textRenderer, Text.literal("3"), middle - 3, y + 3, label, false);
 		drawContext.drawText(client.textRenderer, Text.literal("5"), right - 3, y + 3, label, false);
 		drawContext.drawText(client.textRenderer, Text.literal("2"), left - 3, y + 44, label, false);
 		drawContext.drawText(client.textRenderer, Text.literal("4"), middle - 3, y + 44, label, false);
 		drawContext.drawText(client.textRenderer, Text.literal("6"), right - 3, y + 44, label, false);
-		drawContext.drawText(client.textRenderer, Text.literal("R"), right + 6, y + 44, 0xFFFF5555, false);
 
 		double px;
 		double py;
@@ -229,9 +229,7 @@ public class IronMileClient implements ClientModInitializer {
 			py = selected[1];
 		}
 
-		int knobX = px > 1.20
-				? right + 8
-				: (int) Math.round(middle + px * (right - middle));
+		int knobX = (int) Math.round(middle + px * (right - middle));
 		int knobY = (int) Math.round(neutral + py * (bottom - neutral));
 
 		// No diagonal "debug" shaft: only the selector itself moves.
@@ -267,6 +265,20 @@ public class IronMileClient implements ClientModInitializer {
 		}
 
 		return mouseShifterActive;
+	}
+
+	public static void handleCarAttackInput() {
+		// Reverse lockout toggling is handled from the attack-key press edge in
+		// the client tick. This method remains as the left-click suppression hook.
+	}
+
+
+	public static boolean shouldSuppressCarAttack() {
+		MinecraftClient client = MinecraftClient.getInstance();
+		return client.currentScreen == null
+				&& client.player != null
+				&& client.player.getVehicle() instanceof CarEntity car
+				&& car.getControllingPassenger() == client.player;
 	}
 
 	public static boolean shouldSuppressManualUse() {
@@ -306,32 +318,172 @@ public class IronMileClient implements ClientModInitializer {
 		}
 
 		/*
-		 * Mouse movement is intentionally not mapped 1:1 to the lever.
-		 * Velocity, damping and gate resistance make the selector feel heavier
-		 * without turning it into obvious input lag.
+		 * Pure H-track movement.
+		 *
+		 * There are no springs, magnets, resistance forces, or intent guessing.
+		 * The knob simply obeys the geometry visible on screen:
+		 *
+		 * - inside a vertical lane: only up/down movement is legal;
+		 * - once the knob reaches the neutral bar: left/right movement is legal;
+		 * - while on neutral, up/down becomes legal whenever the knob is close
+		 *   enough to one of the three gear columns.
 		 */
-		double dx = Math.max(-24.0, Math.min(24.0, rawDx));
-		double dy = Math.max(-24.0, Math.min(24.0, rawDy));
+		// Horizontal movement along Neutral is intentionally slower than
+		// vertical gate movement so crossing neutral slots takes a deliberate
+		// sideways sweep instead of racing across the H-pattern.
+		double moveX = Math.max(-30.0, Math.min(30.0, rawDx)) * 0.0065;
+		double moveY = Math.max(-30.0, Math.min(30.0, rawDy)) * 0.012;
 
-		boolean inGate = Math.abs(shifterY) > 0.40;
-		double horizontalResistance = inGate ? 0.10 : 0.66;
-		double verticalResistance = Math.abs(shifterY) < 0.25 ? 0.52 : 0.70;
+		/*
+		 * On the user's input path, positive raw Y corresponds to moving the
+		 * mouse downward on screen, so do not invert this value.
+		 */
+		int steps = Math.max(1, Math.min(20,
+				(int) Math.ceil(Math.max(Math.abs(moveX), Math.abs(moveY)) / 0.035)));
 
-		shifterVelocityX = shifterVelocityX * 0.38 + dx * 0.012 * horizontalResistance;
-		shifterVelocityY = shifterVelocityY * 0.38 + dy * 0.012 * verticalResistance;
+		double stepX = moveX / steps;
+		double stepY = moveY / steps;
 
-		shifterX += shifterVelocityX;
-		shifterY += shifterVelocityY;
+		for (int i = 0; i < steps; i++) {
+			applyPureTrackStep(stepX, stepY);
+		}
+	}
 
-		constrainWeightedShifter();
+	private static void applyPureTrackStep(double dx, double dy) {
+		final double DETENT_CAPTURE = 0.22;
+		final double DETENT_RELEASE = 0.34;
+		final double SIDE_ENTRY_Y = 0.46;
+
+		double absX = Math.abs(dx);
+		double absY = Math.abs(dy);
+
+		if (!shifterInVerticalLane) {
+			/*
+			 * Neutral is now continuous again: the knob visibly DRAGS across the
+			 * horizontal bar instead of teleporting between three checkpoints.
+			 *
+			 * The three neutral positions (-1, 0, +1) are strong soft detents.
+			 * When the player's horizontal movement slows near one, the knob
+			 * settles into it. Continued deliberate movement pushes through.
+			 */
+			shifterY = 0.0;
+
+			boolean clearlyVertical =
+					absY > 0.0008
+					&& absY > absX * 1.35;
+
+			double nearest = nearestColumn(shifterX);
+			double distanceToNearest = Math.abs(shifterX - nearest);
+
+			if (clearlyVertical && distanceToNearest <= DETENT_CAPTURE) {
+				shifterX = nearest;
+				neutralSlot = (int) nearest;
+				shifterInVerticalLane = true;
+				shifterY = Math.max(-1.0, Math.min(1.0, dy));
+				return;
+			}
+
+			if (absX > 0.00025) {
+				/*
+				 * Continuous travel. Near a detent, slow the knob somewhat so the
+				 * player can feel/see the neutral position without turning it into
+				 * a hard wall.
+				 */
+				double speedScale = distanceToNearest <= DETENT_RELEASE ? 0.62 : 1.0;
+				shifterX = Math.max(-1.0, Math.min(1.0, shifterX + dx * speedScale));
+
+				double afterNearest = nearestColumn(shifterX);
+				double afterDistance = Math.abs(shifterX - afterNearest);
+
+				/*
+				 * If movement is small and we're close to a detent, settle there.
+				 * With stronger continued input the knob remains visibly dragged
+				 * through and can continue toward the next neutral position.
+				 */
+				if (afterDistance <= DETENT_CAPTURE && absX < 0.010) {
+					shifterX = afterNearest;
+				}
+				neutralSlot = (int) nearestColumn(shifterX);
+			}
+			return;
+		}
+
+		/*
+		 * Inside a vertical gear rail, X remains fixed. But close to Neutral,
+		 * a clear sideways gesture can release the stick into the horizontal
+		 * bar early, preserving the forgiving side-entry behavior.
+		 */
+		shifterX = neutralSlot;
+
+		boolean closeToNeutral = Math.abs(shifterY) <= SIDE_ENTRY_Y;
+		boolean clearlySideways =
+				absX > 0.0007
+				&& absX >= absY * 0.72;
+
+		if (closeToNeutral && clearlySideways) {
+			shifterY = 0.0;
+			shifterInVerticalLane = false;
+
+			// Preserve the same sideways gesture so the knob visibly begins
+			// sliding across Neutral immediately.
+			shifterX = Math.max(-1.0, Math.min(1.0, shifterX + dx * 0.75));
+			neutralSlot = (int) nearestColumn(shifterX);
+			return;
+		}
+
+		double previousY = shifterY;
+		double nextY = Math.max(-1.0, Math.min(1.0, shifterY + dy));
+
+		boolean reachedNeutral =
+				(previousY < 0.0 && nextY >= 0.0)
+				|| (previousY > 0.0 && nextY <= 0.0)
+				|| Math.abs(nextY) < 0.015;
+
+		if (reachedNeutral) {
+			shifterY = 0.0;
+			shifterInVerticalLane = false;
+
+			// Begin continuous horizontal drag with any X from the same sample.
+			shifterX = Math.max(-1.0, Math.min(1.0, shifterX + dx * 0.75));
+			neutralSlot = (int) nearestColumn(shifterX);
+			return;
+		}
+
+		shifterY = nextY;
+	}
+
+	private static double alignedColumn(double x, double threshold) {
+		double[] columns = {-1.0, 0.0, 1.0};
+		double best = Double.NaN;
+		double distance = Double.MAX_VALUE;
+
+		for (double column : columns) {
+			double d = Math.abs(x - column);
+			if (d <= threshold && d < distance) {
+				best = column;
+				distance = d;
+			}
+		}
+		return best;
+	}
+
+	private static double nearestColumn(double x) {
+		if (x < -0.5) return -1.0;
+		if (x > 0.5) return 1.0;
+		return 0.0;
 	}
 
 	private static void beginMouseShifter(CarEntity car) {
 		mouseShifterActive = true;
-		setShifterPositionFromGear(car.getSelectedGearDisplay());
-		shifterVelocityX = 0.0;
-		shifterVelocityY = 0.0;
 		gearAtShiftStart = gearNumberFromDisplay(car.getSelectedGearDisplay());
+		reverseLockoutLatched = gearAtShiftStart == -1;
+		reverseToggleWasDown = false;
+		setShifterPositionFromGear(car.getSelectedGearDisplay());
+		shifterInVerticalLane = Math.abs(shifterY) > 0.01;
+		neutralSlot = (int) nearestColumn(shifterX);
+		if (!shifterInVerticalLane) {
+			shifterY = 0.0;
+		}
 	}
 
 	private static void finishMouseShifter() {
@@ -339,7 +491,7 @@ public class IronMileClient implements ClientModInitializer {
 		if (client.player != null
 				&& client.player.getVehicle() instanceof CarEntity car
 				&& car.isManualTransmission()) {
-			int selectedGear = resolveWeightedShifterGear();
+			int selectedGear = resolvePureTrackGear();
 			String before = car.getSelectedGearDisplay();
 
 			car.selectManualGear(selectedGear);
@@ -355,13 +507,16 @@ public class IronMileClient implements ClientModInitializer {
 
 	private static void cancelMouseShifter() {
 		mouseShifterActive = false;
-		shifterVelocityX = 0.0;
-		shifterVelocityY = 0.0;
+		reverseLockoutLatched = false;
+		reverseToggleWasDown = false;
+		shifterInVerticalLane = false;
+		neutralSlot = 0;
+		shifterX = 0.0;
+		shifterY = 0.0;
 	}
 
 	private static void playGearEngageSound(MinecraftClient client) {
 		if (client.player != null) {
-			// A low-pitched vanilla lever click gives a small, dry mechanical clack.
 			client.player.playSound(SoundEvents.BLOCK_LEVER_CLICK, 0.55F, 0.72F);
 		}
 	}
@@ -374,13 +529,12 @@ public class IronMileClient implements ClientModInitializer {
 
 	private static double[] shifterPositionForGear(String gear) {
 		return switch (gear) {
-			case "1" -> new double[] {-1.0, -1.0};
+			case "1", "R" -> new double[] {-1.0, -1.0};
 			case "2" -> new double[] {-1.0, 1.0};
 			case "3" -> new double[] {0.0, -1.0};
 			case "4" -> new double[] {0.0, 1.0};
 			case "5" -> new double[] {1.0, -1.0};
 			case "6" -> new double[] {1.0, 1.0};
-			case "R" -> new double[] {1.50, 1.0};
 			default -> new double[] {0.0, 0.0};
 		};
 	}
@@ -395,58 +549,39 @@ public class IronMileClient implements ClientModInitializer {
 		}
 	}
 
-	private static void constrainWeightedShifter() {
-		shifterX = Math.max(-1.0, Math.min(1.50, shifterX));
-		shifterY = Math.max(-1.0, Math.min(1.0, shifterY));
+	private static int resolvePureTrackGear() {
+		final double NEUTRAL_RELEASE = 0.28;
+		final double COLUMN_RELEASE = 0.40;
 
-		// The neutral channel has a gentle centering tendency.
-		if (Math.abs(shifterY) < 0.28) {
-			shifterY *= 0.72;
-		}
-
-		/*
-		 * Once the lever is entering a gate, sideways movement becomes difficult
-		 * and the lever settles toward that gate's rail. To change columns the
-		 * player must deliberately return toward neutral first.
-		 */
-		if (Math.abs(shifterY) > 0.48) {
-			double rail;
-			if (shifterX > 1.22 && shifterY > 0.0) {
-				rail = 1.50; // reverse
-			} else if (shifterX < -0.50) {
-				rail = -1.0;
-			} else if (shifterX < 0.50) {
-				rail = 0.0;
-			} else {
-				rail = 1.0;
-			}
-			shifterX += (rail - shifterX) * 0.28;
-			shifterVelocityX *= 0.32;
-		}
-
-		// Soft end-stop resistance.
-		if (Math.abs(shifterY) > 0.88) {
-			shifterVelocityY *= 0.28;
-		}
-	}
-
-	private static int resolveWeightedShifterGear() {
-		// Releasing in the middle of the pattern explicitly selects neutral.
-		if (Math.abs(shifterY) < 0.66) {
+		// Anywhere around the whole middle bar is Neutral.
+		if (Math.abs(shifterY) <= NEUTRAL_RELEASE) {
 			return 0;
 		}
 
-		if (shifterX > 1.22 && shifterY > 0.66) {
+		double column = alignedColumn(shifterX, COLUMN_RELEASE);
+		if (Double.isNaN(column)) {
+			return 0;
+		}
+
+		boolean lower = shifterY > 0.0;
+
+		/*
+		 * Reverse shares the upper-left physical gate with 1st. Left-click
+		 * toggles the push-down lockout while right-click is holding the stick:
+		 * press once = R, press again = 1.
+		 */
+		if (!lower && column == -1.0 && reverseLockoutLatched) {
+			shifterX = -1.0;
+			shifterY = -1.0;
 			return -1;
 		}
 
-		int column = shifterX < -0.50 ? 0 : (shifterX < 0.50 ? 1 : 2);
-		boolean lower = shifterY > 0.0;
-		return switch (column) {
-			case 0 -> lower ? 2 : 1;
-			case 1 -> lower ? 4 : 3;
-			default -> lower ? 6 : 5;
-		};
+		shifterX = column;
+		shifterY = lower ? 1.0 : -1.0;
+
+		if (column == -1.0) return lower ? 2 : 1;
+		if (column == 0.0) return lower ? 4 : 3;
+		return lower ? 6 : 5;
 	}
 
 }
