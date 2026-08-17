@@ -841,8 +841,11 @@ public class CarEntity extends BoatEntity {
 	}
 
 	private double applyThrottleAndBrakes(double speed, double grip) {
-		if (this.isAutomaticTransmission()) this.updateAutomaticTransmission(speed);
-		else if (this.shiftTicksRemaining > 0) this.shiftTicksRemaining--;
+		if (this.isAutomaticTransmission()) {
+			this.updateAutomaticTransmission(speed);
+		} else if (this.shiftTicksRemaining > 0) {
+			this.shiftTicksRemaining--;
+		}
 		boolean shifting = this.shiftTicksRemaining > 0;
 
 		if (this.isManualTransmission()) {
@@ -863,12 +866,16 @@ public class CarEntity extends BoatEntity {
 				}
 			} else {
 				if (speed < -0.03 && this.pressingForward) speed = Math.min(0.0, speed + this.getBrakeForce(speed, grip));
-				else if (this.pressingForward && !this.pressingBack && !shifting) speed += this.getDrivetrainAcceleration(speed, grip, false);
+				else if (this.pressingForward && !this.pressingBack && !shifting) {
+					double acceleration = this.getDrivetrainAcceleration(speed, grip, false);
+					acceleration *= this.getManualHighGearLaunchScale(speed);
+					acceleration *= this.getManualLimiterTorqueScale();
+					speed += acceleration;
+				}
 				else if (speed > 0.03 && this.pressingBack) speed = Math.max(0.0, speed - this.getBrakeForce(speed, grip));
 				else {
 					speed *= this.vehicleSpec.rollingResistance();
-					double ratio = this.vehicleSpec.gearRatio(this.currentGear);
-					speed = this.moveTowardZero(speed, this.vehicleSpec.engineBrakeForce() * (ratio / this.vehicleSpec.gearRatio(1)));
+					speed = this.moveTowardZero(speed, this.getManualEngineBrakeForce(speed));
 				}
 			}
 		} else {
@@ -995,6 +1002,76 @@ public class CarEntity extends BoatEntity {
 	}
 
 
+
+	private double getManualHighGearLaunchScale(double speed) {
+		if (!this.isManualTransmission() || this.currentGear <= 1) {
+			return 1.0;
+		}
+
+		double speedKmh = Math.abs(speed) * 72.0;
+
+		/*
+		 * A real manual car will move if you start in a tall gear, but it feels
+		 * bogged down. This gives each higher gear a weak low-speed region that
+		 * fades away once road speed is appropriate for that gear.
+		 */
+		double usefulSpeedKmh = switch (this.currentGear) {
+			case 2 -> 20.0;
+			case 3 -> 38.0;
+			case 4 -> 58.0;
+			case 5 -> 78.0;
+			default -> 95.0;
+		};
+
+		double minimumScale = switch (this.currentGear) {
+			case 2 -> 0.62;
+			case 3 -> 0.40;
+			case 4 -> 0.27;
+			case 5 -> 0.19;
+			default -> 0.14;
+		};
+
+		double progress = MathHelper.clamp(speedKmh / usefulSpeedKmh, 0.0, 1.0);
+		return minimumScale + (1.0 - minimumScale) * progress;
+	}
+
+	private double getManualEngineBrakeForce(double speed) {
+		if (!this.isManualTransmission() || this.currentGear <= 0) {
+			return 0.0;
+		}
+
+		double ratio = this.vehicleSpec.gearRatio(this.currentGear);
+		double firstRatio = this.vehicleSpec.gearRatio(1);
+		double ratioScale = ratio / firstRatio;
+
+		/*
+		 * First and second now slow the car noticeably on throttle lift, while
+		 * high gears remain gentler. Speed adds a little extra braking without
+		 * turning it into a second brake pedal.
+		 */
+		double gearScale = 0.48 + ratioScale * 1.55;
+		double speedScale = 0.70 + Math.min(0.60, Math.abs(speed) * 0.55);
+		return this.vehicleSpec.engineBrakeForce() * gearScale * speedScale;
+	}
+
+	private double getManualLimiterTorqueScale() {
+		if (!this.isManualTransmission() || this.currentGear <= 0) {
+			return 1.0;
+		}
+
+		double limiter = this.vehicleSpec.revLimiterRpm();
+		double softStart = limiter - 450.0;
+
+		if (this.engineRpm <= softStart) {
+			return 1.0;
+		}
+		if (this.engineRpm >= limiter) {
+			return 0.0;
+		}
+
+		double t = (this.engineRpm - softStart) / (limiter - softStart);
+		return 1.0 - t;
+	}
 
 	private double getDrivetrainAcceleration(double speed, double grip, boolean reverse) {
 		return this.vehicleSpec.drivetrainAcceleration(speed, grip, this.currentGear, reverse);

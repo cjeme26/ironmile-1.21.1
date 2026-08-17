@@ -135,10 +135,10 @@ public record VehicleSpec(
                 0.025,      // AUTOMATIC_STOP_SPEED
 
                 800.0,      // IDLE_RPM
-                1600.0,     // DOWNSHIFT_RPM
+                1750.0,     // DOWNSHIFT_RPM
                 2300.0,     // KICKDOWN_RPM
                 2600.0,     // throttle-release economy upshift threshold
-                5500.0,     // UPSHIFT_RPM (paired with shorter hatchback gearing)
+                4200.0,     // UPSHIFT_RPM (earlier everyday-small-hatchback shift)
                 6500.0,     // REDLINE_RPM
                 6700.0,     // REV_LIMITER_RPM
                 6           // SHIFT_DURATION_TICKS
