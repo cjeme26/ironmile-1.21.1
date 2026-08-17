@@ -29,7 +29,7 @@ import net.minecraft.world.World;
 import net.minecraft.server.world.ServerWorld;
 
 /**
- * The second Iron Mile vehicle prototype: simple road-focused movement.
+ * Iron Mile road vehicle with road-focused movement and drivetrain simulation.
  *
  * <p>We still inherit BoatEntity temporarily for its proven passenger and
  * keyboard-input plumbing, but Iron Mile now calculates authoritative movement
@@ -43,6 +43,10 @@ public class CarEntity extends BoatEntity {
 	private static final TrackedData<Boolean> HEADLIGHTS_ON = DataTracker.registerData(
 			CarEntity.class,
 			TrackedDataHandlerRegistry.BOOLEAN
+	);
+	private static final TrackedData<String> VEHICLE_SPEC_ID = DataTracker.registerData(
+			CarEntity.class,
+			TrackedDataHandlerRegistry.STRING
 	);
 	private static final TrackedData<Integer> SYNCED_GEAR = DataTracker.registerData(
 			CarEntity.class,
@@ -90,46 +94,36 @@ public class CarEntity extends BoatEntity {
 	);
 	private static final String TIRE_NBT_KEY = "IronMileTireType";
 	private static final String HEADLIGHTS_NBT_KEY = "IronMileHeadlightsOn";
+	private static final String VEHICLE_SPEC_NBT_KEY = "IronMileVehicleSpec";
+	private static final String MANUAL_GEAR_NBT_KEY = "IronMileManualGear";
 
-	// Horizontal speeds are measured in blocks per game tick.
-	public static final double MAX_FORWARD_SPEED = 1.95;
-	public static final double MAX_REVERSE_SPEED = 0.35;
-	public static final double BRAKE_FORCE = 0.021;
-	public static final double ROLLING_RESISTANCE = 0.992;
-	public static final double LATERAL_VELOCITY_RETAINED = 0.42;
-	public static final float MAX_STEERING_PER_TICK = 2.6F;
-	private static final double[] GEAR_RATIOS = {0.0, 3.80, 2.40, 1.65, 1.25, 0.95, 0.72};
-	private static final double REVERSE_RATIO = 3.20;
-	private static final double FINAL_DRIVE_RATIO = 4.00;
-	private static final double WHEEL_RADIUS_METRES = 0.34;
-	private static final double VEHICLE_MASS_KG = 1500.0;
-	private static final double DRIVETRAIN_EFFICIENCY = 0.86;
-	private static final double AERODYNAMIC_DRAG = 0.00030;
-	private static final double ENGINE_BRAKE_FORCE = 0.00055;
-	private static final double LOW_SPEED_COAST_THRESHOLD = 0.35;
-	private static final double LOW_SPEED_COAST_BRAKE = 0.0024;
-	private static final double REVERSE_COAST_BRAKE_MULTIPLIER = 1.5;
-	private static final double AUTOMATIC_STOP_SPEED = 0.025;
-	/** 1 block/tick is approximately 72 km/h at Minecraft's 20 TPS. */
-	private static final double EXIT_INSTANT_STOP_SPEED = 10.0 / 72.0;
-	private static final double EXIT_BRAKE_MIN_FORCE = 0.035;
-	private static final double EXIT_BRAKE_SPEED_FRACTION = 0.22;
-	private static final double IDLE_RPM = 800.0;
-	private static final double DOWNSHIFT_RPM = 1600.0;
-	private static final double KICKDOWN_RPM = 2300.0;
-	private static final double UPSHIFT_RPM = 5800.0;
-	private static final double REDLINE_RPM = 6500.0;
-	private static final double REV_LIMITER_RPM = 6700.0;
-	private static final int SHIFT_DURATION_TICKS = 6;
+	// Vehicle-specific driving values live in VehicleSpec so additional cars can
+	// share this entity logic without duplicating the drivetrain simulation.
+	private VehicleSpec vehicleSpec = VehicleSpec.HATCHBACK_AUTOMATIC;
+
 	private static final double GRAVITY = 0.04;
 	private static final double GROUNDING_FORCE = 0.08;
 	private static final float STEP_HEIGHT = 0.6F;
 	private static final double MAX_COLLISION_STEP_DISTANCE = 0.35;
 	private static final int MAX_COLLISION_STEPS_PER_TICK = 8;
 	private static final double STOP_EPSILON = 0.002;
+	private static final double EXIT_INSTANT_STOP_SPEED = 10.0 / 72.0;
+	private static final double EXIT_BRAKE_MIN_FORCE = 0.035;
+	private static final double EXIT_BRAKE_SPEED_FRACTION = 0.22;
 	private static final int REMOTE_POSITION_INTERPOLATION_STEPS = 2;
 	private static final double CLIENT_PREDICTION_HARD_CORRECTION_DISTANCE_SQUARED = 16.0;
 	private static final float CLIENT_PREDICTION_HARD_CORRECTION_YAW_DEGREES = 75.0F;
+	/*
+	 * Keep simulating locally for a few ticks after the driver leaves. This lets the
+	 * authoritative server transition into the same no-input/exit-braking state
+	 * before normal remote-entity interpolation takes over.
+	 */
+	private static final int CLIENT_DISMOUNT_HANDOFF_TICKS = 3;
+	/* Ignore only tiny residual differences at the end of the handoff. */
+	private static final double CLIENT_DISMOUNT_DEAD_ZONE_DISTANCE = 0.18;
+	private static final double CLIENT_DISMOUNT_DEAD_ZONE_DISTANCE_SQUARED =
+			CLIENT_DISMOUNT_DEAD_ZONE_DISTANCE * CLIENT_DISMOUNT_DEAD_ZONE_DISTANCE;
+	private static final float CLIENT_DISMOUNT_DEAD_ZONE_YAW_DEGREES = 4.0F;
 	private static final int BUMPER_CONTACT_SEARCH_STEPS = 7;
 	private static final double MIN_BUMPER_CONTACT_MOVEMENT = 0.001;
 	private static final double BUMPER_CONTACT_RECHECK_DISTANCE = 0.035;
@@ -153,7 +147,7 @@ public class CarEntity extends BoatEntity {
 	private String currentRoadConditionName = "Dry";
 	private int currentGear = 1;
 	private int shiftTicksRemaining;
-	private double engineRpm = IDLE_RPM;
+	private double engineRpm = this.vehicleSpec.idleRpm();
 	private double lastForwardSpeed;
 	private boolean exitBrakingActive;
 	private boolean reverseEngaged;
@@ -168,6 +162,7 @@ public class CarEntity extends BoatEntity {
 	 * backwards every tick. Remote cars continue to use server interpolation.
 	 */
 	private boolean clientPredictionActive;
+	private int clientPredictionHandoffTicks;
 	private boolean clientHasAuthoritativeTransform;
 	private double clientAuthoritativeX;
 	private double clientAuthoritativeY;
@@ -226,8 +221,9 @@ public class CarEntity extends BoatEntity {
 		super.initDataTracker(builder);
 		builder.add(TIRE_TYPE, TireType.ALL_SEASON.ordinal());
 		builder.add(HEADLIGHTS_ON, false);
+		builder.add(VEHICLE_SPEC_ID, VehicleSpec.HATCHBACK_AUTOMATIC.id());
 		builder.add(SYNCED_GEAR, 1);
-		builder.add(SYNCED_ENGINE_RPM, (int) IDLE_RPM);
+		builder.add(SYNCED_ENGINE_RPM, (int) VehicleSpec.HATCHBACK_AUTOMATIC.idleRpm());
 		builder.add(SYNCED_SHIFTING, false);
 		builder.add(SYNCED_REVERSE, false);
 		builder.add(SYNCED_FORWARD_SPEED, 0.0F);
@@ -244,6 +240,8 @@ public class CarEntity extends BoatEntity {
 		super.writeCustomDataToNbt(nbt);
 		nbt.putInt(TIRE_NBT_KEY, this.getTireType().ordinal());
 		nbt.putBoolean(HEADLIGHTS_NBT_KEY, this.areHeadlightsOn());
+		nbt.putString(VEHICLE_SPEC_NBT_KEY, this.getVehicleSpec().id());
+		if (this.isManualTransmission()) nbt.putInt(MANUAL_GEAR_NBT_KEY, this.currentGear);
 	}
 
 	@Override
@@ -254,6 +252,13 @@ public class CarEntity extends BoatEntity {
 		}
 		if (nbt.contains(HEADLIGHTS_NBT_KEY)) {
 			this.setHeadlightsOn(nbt.getBoolean(HEADLIGHTS_NBT_KEY));
+		}
+		if (nbt.contains(VEHICLE_SPEC_NBT_KEY)) {
+			this.setVehicleSpec(VehicleSpec.fromId(nbt.getString(VEHICLE_SPEC_NBT_KEY)));
+		}
+		if (this.isManualTransmission() && nbt.contains(MANUAL_GEAR_NBT_KEY)) {
+			this.currentGear = MathHelper.clamp(nbt.getInt(MANUAL_GEAR_NBT_KEY), -1, this.vehicleSpec.gearCount());
+			this.reverseEngaged = this.currentGear == -1;
 		}
 	}
 
@@ -344,11 +349,10 @@ public class CarEntity extends BoatEntity {
 		this.clientAuthoritativeYaw = yaw;
 		this.clientAuthoritativePitch = pitch;
 
-		if (this.isLocallyControlledClient()) {
+		if (this.clientPredictionActive) {
 			double positionErrorSquared = this.squaredDistanceTo(x, y, z);
 			float yawError = Math.abs(MathHelper.wrapDegrees(yaw - this.getYaw()));
-			if (!this.clientPredictionActive
-					|| positionErrorSquared > CLIENT_PREDICTION_HARD_CORRECTION_DISTANCE_SQUARED
+			if (positionErrorSquared > CLIENT_PREDICTION_HARD_CORRECTION_DISTANCE_SQUARED
 					|| yawError > CLIENT_PREDICTION_HARD_CORRECTION_YAW_DEGREES) {
 				this.setPosition(x, y, z);
 				this.setRotation(yaw, pitch);
@@ -368,7 +372,7 @@ public class CarEntity extends BoatEntity {
 	public void setVelocityClient(double x, double y, double z) {
 		this.clientHasAuthoritativeVelocity = true;
 		this.clientAuthoritativeVelocity = new Vec3d(x, y, z);
-		if (this.getWorld().isClient && this.isLocallyControlledClient() && this.clientPredictionActive) {
+		if (this.getWorld().isClient && this.clientPredictionActive) {
 			return;
 		}
 		super.setVelocityClient(x, y, z);
@@ -376,6 +380,8 @@ public class CarEntity extends BoatEntity {
 
 	@Override
 	public void tick() {
+		this.vehicleSpec = VehicleSpec.fromId(this.dataTracker.get(VEHICLE_SPEC_ID));
+
 		if (!this.hasControllingPassenger()) {
 			this.clearInputs();
 		}
@@ -385,6 +391,7 @@ public class CarEntity extends BoatEntity {
 				if (!this.clientPredictionActive) {
 					this.beginClientPrediction();
 				}
+				this.clientPredictionHandoffTicks = 0;
 
 				/*
 				 * This mirrors the authoritative server path without making the client a
@@ -397,7 +404,28 @@ public class CarEntity extends BoatEntity {
 			}
 
 			if (this.clientPredictionActive) {
-				this.endClientPrediction();
+				/*
+				 * A remote driver taking over should immediately use server tracking. For a
+				 * normal dismount, however, keep predicting the unoccupied car briefly so
+				 * the server can enter the same exit-braking state without a visible rewind.
+				 */
+				if (this.hasControllingPassenger()) {
+					this.endClientPrediction();
+				} else {
+					if (this.clientPredictionHandoffTicks <= 0) {
+						this.clientPredictionHandoffTicks = CLIENT_DISMOUNT_HANDOFF_TICKS;
+					}
+
+					this.clearInputs();
+					this.baseTick();
+					this.tickRoadMovement();
+					this.clientPredictionHandoffTicks--;
+
+					if (this.clientPredictionHandoffTicks <= 0) {
+						this.endClientPrediction();
+					}
+					return;
+				}
 			}
 
 			/*
@@ -425,6 +453,7 @@ public class CarEntity extends BoatEntity {
 
 	private void beginClientPrediction() {
 		this.clientPredictionActive = true;
+		this.clientPredictionHandoffTicks = 0;
 
 		/* Seed private drivetrain fields from the latest authoritative tracker data. */
 		this.currentGear = this.dataTracker.get(SYNCED_GEAR);
@@ -440,24 +469,43 @@ public class CarEntity extends BoatEntity {
 
 	private void endClientPrediction() {
 		this.clientPredictionActive = false;
+		this.clientPredictionHandoffTicks = 0;
 		this.clearInputs();
 
 		/*
-		 * Hand control back to the newest server snapshot. Because the server has
-		 * simulated throughout the drive, this should be a small correction rather
-		 * than the old multi-second rewind/teleport.
+		 * By the end of the short handoff, the latest server snapshot should be close
+		 * to the locally simulated position. Tiny remaining differences are ignored so
+		 * the handoff cannot create a several-pixel rewind. Large differences still
+		 * reconcile, preserving server authority if the simulations genuinely diverge.
 		 */
+		boolean needsAuthoritativeCorrection = false;
 		if (this.clientHasAuthoritativeTransform) {
-			this.lerpPosAndRotation(
-					REMOTE_POSITION_INTERPOLATION_STEPS,
-					this.clientAuthoritativeX,
-					this.clientAuthoritativeY,
-					this.clientAuthoritativeZ,
-					this.clientAuthoritativeYaw,
-					this.clientAuthoritativePitch
-			);
+			double xError = this.clientAuthoritativeX - this.getX();
+			double yError = this.clientAuthoritativeY - this.getY();
+			double zError = this.clientAuthoritativeZ - this.getZ();
+			double positionErrorSquared = xError * xError + yError * yError + zError * zError;
+			float yawError = Math.abs(MathHelper.wrapDegrees(this.clientAuthoritativeYaw - this.getYaw()));
+
+			needsAuthoritativeCorrection = positionErrorSquared > CLIENT_DISMOUNT_DEAD_ZONE_DISTANCE_SQUARED
+					|| yawError > CLIENT_DISMOUNT_DEAD_ZONE_YAW_DEGREES;
+			if (needsAuthoritativeCorrection) {
+				this.lerpPosAndRotation(
+						REMOTE_POSITION_INTERPOLATION_STEPS,
+						this.clientAuthoritativeX,
+						this.clientAuthoritativeY,
+						this.clientAuthoritativeZ,
+						this.clientAuthoritativeYaw,
+						this.clientAuthoritativePitch
+				);
+			}
 		}
-		if (this.clientHasAuthoritativeVelocity) {
+
+		/*
+		 * Do not replace a good locally predicted exit-braking velocity with the older
+		 * velocity snapshot that arrived while driving. Only use server velocity when
+		 * we also had to correct a meaningful transform error.
+		 */
+		if (needsAuthoritativeCorrection && this.clientHasAuthoritativeVelocity) {
 			this.setVelocity(this.clientAuthoritativeVelocity);
 		}
 	}
@@ -537,7 +585,7 @@ public class CarEntity extends BoatEntity {
 			if (this.exitBrakingActive) {
 				forwardSpeed = this.applyExitParkingBrake(forwardSpeed);
 			} else {
-				forwardSpeed *= ROLLING_RESISTANCE;
+				forwardSpeed *= this.vehicleSpec.rollingResistance();
 			}
 			sidewaysSpeed *= this.getLateralVelocityRetained();
 		}
@@ -604,7 +652,7 @@ public class CarEntity extends BoatEntity {
 
 	private double holdAtBumperContact() {
 		this.lastForwardSpeed = 0.0;
-		this.engineRpm += (IDLE_RPM - this.engineRpm) * 0.35;
+		this.engineRpm += (this.vehicleSpec.idleRpm() - this.engineRpm) * 0.35;
 		return 0.0;
 	}
 
@@ -793,58 +841,63 @@ public class CarEntity extends BoatEntity {
 	}
 
 	private double applyThrottleAndBrakes(double speed, double grip) {
-		this.updateAutomaticTransmission(speed);
+		if (this.isAutomaticTransmission()) this.updateAutomaticTransmission(speed);
+		else if (this.shiftTicksRemaining > 0) this.shiftTicksRemaining--;
 		boolean shifting = this.shiftTicksRemaining > 0;
 
-		if (this.pressingForward && !this.pressingBack) {
-			if (speed < -0.03) {
-				speed = Math.min(0.0, speed + this.getBrakeForce(speed, grip));
-				this.reverseEngaged = speed < 0.0;
-			} else if (!shifting) {
-				this.reverseEngaged = false;
-				speed += this.getDrivetrainAcceleration(speed, grip, false);
-			}
-		} else if (this.pressingBack && !this.pressingForward) {
-			if (speed > 0.03) {
-				speed = Math.max(0.0, speed - this.getBrakeForce(speed, grip));
-				this.reverseEngaged = false;
-			} else if (!shifting) {
-				this.reverseEngaged = true;
-				speed -= this.getDrivetrainAcceleration(speed, grip, true);
+		if (this.isManualTransmission()) {
+			// Manual selector order: R (-1), N (0), 1, 2, 3, 4, 5, 6.
+			this.reverseEngaged = this.currentGear == -1;
+			if (this.currentGear == 0) {
+				// Neutral disconnects the engine from the wheels.
+				if (speed > 0.03 && this.pressingBack) speed = Math.max(0.0, speed - this.getBrakeForce(speed, grip));
+				else if (speed < -0.03 && this.pressingForward) speed = Math.min(0.0, speed + this.getBrakeForce(speed, grip));
+				else speed *= this.vehicleSpec.rollingResistance();
+			} else if (this.currentGear == -1) {
+				if (speed > 0.03 && this.pressingBack) speed = Math.max(0.0, speed - this.getBrakeForce(speed, grip));
+				else if (this.pressingBack && !this.pressingForward && !shifting) speed -= this.getDrivetrainAcceleration(speed, grip, true);
+				else if (speed < -0.03 && this.pressingForward) speed = Math.min(0.0, speed + this.getBrakeForce(speed, grip));
+				else {
+					speed *= this.vehicleSpec.rollingResistance();
+					speed = this.moveTowardZero(speed, this.vehicleSpec.lowSpeedCoastBrake() * this.vehicleSpec.reverseCoastBrakeMultiplier());
+				}
+			} else {
+				if (speed < -0.03 && this.pressingForward) speed = Math.min(0.0, speed + this.getBrakeForce(speed, grip));
+				else if (this.pressingForward && !this.pressingBack && !shifting) speed += this.getDrivetrainAcceleration(speed, grip, false);
+				else if (speed > 0.03 && this.pressingBack) speed = Math.max(0.0, speed - this.getBrakeForce(speed, grip));
+				else {
+					speed *= this.vehicleSpec.rollingResistance();
+					double ratio = this.vehicleSpec.gearRatio(this.currentGear);
+					speed = this.moveTowardZero(speed, this.vehicleSpec.engineBrakeForce() * (ratio / this.vehicleSpec.gearRatio(1)));
+				}
 			}
 		} else {
-			speed *= ROLLING_RESISTANCE;
-			double gearRatio = this.reverseEngaged ? REVERSE_RATIO : GEAR_RATIOS[this.currentGear];
-			double engineBrake = ENGINE_BRAKE_FORCE * (gearRatio / GEAR_RATIOS[1]);
-			speed = this.moveTowardZero(speed, engineBrake);
-
-			/*
-			 * Low gears resist coasting more strongly than high gears. Fade this
-			 * effect out by 25 km/h so road-speed coasting remains natural, and
-			 * make reverse settle promptly after the driver releases S.
-			 */
-			double lowSpeedFactor = 1.0 - Math.min(Math.abs(speed) / LOW_SPEED_COAST_THRESHOLD, 1.0);
-			double lowSpeedCoastBrake = LOW_SPEED_COAST_BRAKE * lowSpeedFactor;
-			if (this.reverseEngaged) {
-				lowSpeedCoastBrake *= REVERSE_COAST_BRAKE_MULTIPLIER;
-			}
-			speed = this.moveTowardZero(speed, lowSpeedCoastBrake);
-
-
-			if (Math.abs(speed) < AUTOMATIC_STOP_SPEED) {
-				speed = 0.0;
-				this.exitBrakingActive = false;
+			// Existing automatic behavior.
+			if (this.pressingForward && !this.pressingBack) {
+				if (speed < -0.03) { speed = Math.min(0.0, speed + this.getBrakeForce(speed, grip)); this.reverseEngaged = speed < 0.0; }
+				else if (!shifting) { this.reverseEngaged = false; speed += this.getDrivetrainAcceleration(speed, grip, false); }
+			} else if (this.pressingBack && !this.pressingForward) {
+				if (speed > 0.03) { speed = Math.max(0.0, speed - this.getBrakeForce(speed, grip)); this.reverseEngaged = false; }
+				else if (!shifting) { this.reverseEngaged = true; speed -= this.getDrivetrainAcceleration(speed, grip, true); }
+			} else {
+				speed *= this.vehicleSpec.rollingResistance();
+				double ratio = this.reverseEngaged ? this.vehicleSpec.reverseRatio() : this.vehicleSpec.gearRatio(this.currentGear);
+				speed = this.moveTowardZero(speed, this.vehicleSpec.engineBrakeForce() * (ratio / this.vehicleSpec.gearRatio(1)));
+				double lowSpeedFactor = 1.0 - Math.min(Math.abs(speed) / this.vehicleSpec.lowSpeedCoastThreshold(), 1.0);
+				double coastBrake = this.vehicleSpec.lowSpeedCoastBrake() * lowSpeedFactor;
+				if (this.reverseEngaged) coastBrake *= this.vehicleSpec.reverseCoastBrakeMultiplier();
+				speed = this.moveTowardZero(speed, coastBrake);
 			}
 		}
 
-		if (shifting) {
-			speed *= 0.998;
+		if (Math.abs(speed) < this.vehicleSpec.automaticStopSpeed() && !this.pressingForward && !this.pressingBack) {
+			speed = 0.0;
+			this.exitBrakingActive = false;
 		}
-
-		// Quadratic drag makes high-speed acceleration taper naturally.
-		double drag = AERODYNAMIC_DRAG * speed * speed;
+		if (shifting) speed *= 0.998;
+		double drag = this.vehicleSpec.aerodynamicDrag() * speed * speed;
 		speed = this.moveTowardZero(speed, drag);
-		speed = MathHelper.clamp(speed, -MAX_REVERSE_SPEED, MAX_FORWARD_SPEED);
+		speed = MathHelper.clamp(speed, -this.vehicleSpec.maxReverseSpeed(), this.vehicleSpec.maxForwardSpeed());
 		this.lastForwardSpeed = speed;
 		this.updateEngineRpm(speed, shifting);
 		return speed;
@@ -889,81 +942,73 @@ public class CarEntity extends BoatEntity {
 			return;
 		}
 
-		double coupledRpm = this.calculateCoupledRpm(speed, GEAR_RATIOS[this.currentGear]);
+		double coupledRpm = this.calculateCoupledRpm(speed, this.vehicleSpec.gearRatio(this.currentGear));
 		if (this.pressingForward) {
-			if (coupledRpm >= UPSHIFT_RPM && this.currentGear < 6) {
+			if (coupledRpm >= this.vehicleSpec.upshiftRpm() && this.currentGear < this.vehicleSpec.gearCount()) {
 				this.beginShift(this.currentGear + 1);
 				return;
 			}
 
-			if (coupledRpm < KICKDOWN_RPM && this.currentGear > 1) {
-				double lowerGearRpm = this.calculateCoupledRpm(speed, GEAR_RATIOS[this.currentGear - 1]);
-				if (lowerGearRpm < REDLINE_RPM) {
+			if (coupledRpm < this.vehicleSpec.kickdownRpm() && this.currentGear > 1) {
+				double lowerGearRpm = this.calculateCoupledRpm(speed, this.vehicleSpec.gearRatio(this.currentGear - 1));
+				if (lowerGearRpm < this.vehicleSpec.redlineRpm()) {
 					this.beginShift(this.currentGear - 1);
 					return;
 				}
 			}
-		} else if (coupledRpm > 2600.0 && this.currentGear < 6) {
+		} else if (coupledRpm > this.vehicleSpec.economyUpshiftRpm() && this.currentGear < this.vehicleSpec.gearCount()) {
 			// With binary W input, throttle release represents an economy upshift.
 			this.beginShift(this.currentGear + 1);
 			return;
 		}
 
-		if (coupledRpm < DOWNSHIFT_RPM && this.currentGear > 1) {
+		if (coupledRpm < this.vehicleSpec.downshiftRpm() && this.currentGear > 1) {
 			this.beginShift(this.currentGear - 1);
 		}
 	}
 
 	private void beginShift(int newGear) {
-		this.currentGear = MathHelper.clamp(newGear, 1, 6);
-		this.shiftTicksRemaining = SHIFT_DURATION_TICKS;
+		this.currentGear = MathHelper.clamp(newGear, 1, this.vehicleSpec.gearCount());
+		this.shiftTicksRemaining = this.vehicleSpec.shiftDurationTicks();
 	}
 
-	private double getDrivetrainAcceleration(double speed, double grip, boolean reverse) {
-		double ratio = reverse ? REVERSE_RATIO : GEAR_RATIOS[this.currentGear];
-		double coupledRpm = this.calculateCoupledRpm(speed, ratio);
-		if (coupledRpm >= REV_LIMITER_RPM) {
-			return 0.0;
-		}
+	public void manualShift(int direction) {
+		if (!this.isManualTransmission() || direction == 0 || this.shiftTicksRemaining > 0) return;
+		int targetGear = this.currentGear + Integer.signum(direction);
+		if (targetGear < -1 || targetGear > this.vehicleSpec.gearCount()) return;
+		this.currentGear = targetGear;
+		this.reverseEngaged = targetGear == -1;
+		this.shiftTicksRemaining = this.vehicleSpec.shiftDurationTicks();
+	}
 
-		double torqueNm = this.getEngineTorqueNm(coupledRpm);
-		double wheelTorqueNm = torqueNm * ratio * FINAL_DRIVE_RATIO * DRIVETRAIN_EFFICIENCY;
-		double wheelForceNewtons = wheelTorqueNm / WHEEL_RADIUS_METRES;
-		double accelerationMetresPerSecondSquared = wheelForceNewtons / VEHICLE_MASS_KG;
-		return accelerationMetresPerSecondSquared / 400.0 * grip;
+	public void selectManualGear(int gear) {
+		if (!this.isManualTransmission() || this.shiftTicksRemaining > 0) {
+			return;
+		}
+		int targetGear = MathHelper.clamp(gear, -1, this.vehicleSpec.gearCount());
+		if (targetGear == this.currentGear) {
+			return;
+		}
+		this.currentGear = targetGear;
+		this.reverseEngaged = targetGear == -1;
+		this.shiftTicksRemaining = this.vehicleSpec.shiftDurationTicks();
+	}
+
+
+
+	private double getDrivetrainAcceleration(double speed, double grip, boolean reverse) {
+		return this.vehicleSpec.drivetrainAcceleration(speed, grip, this.currentGear, reverse);
 	}
 
 	private double calculateCoupledRpm(double speed, double ratio) {
-		double metresPerSecond = Math.abs(speed) * 20.0;
-		double wheelRpm = metresPerSecond / (2.0 * Math.PI * WHEEL_RADIUS_METRES) * 60.0;
-		return Math.max(IDLE_RPM, wheelRpm * ratio * FINAL_DRIVE_RATIO);
-	}
-
-	private double getEngineTorqueNm(double rpm) {
-		if (rpm < 1200.0) {
-			return this.lerp(112.0, 154.0, (rpm - IDLE_RPM) / 400.0);
-		}
-		if (rpm < 2500.0) {
-			return this.lerp(154.0, 203.0, (rpm - 1200.0) / 1300.0);
-		}
-		if (rpm < 4500.0) {
-			return this.lerp(203.0, 210.0, (rpm - 2500.0) / 2000.0);
-		}
-		if (rpm < REDLINE_RPM) {
-			return this.lerp(210.0, 147.0, (rpm - 4500.0) / 2000.0);
-		}
-		return 126.0;
+		return this.vehicleSpec.calculateCoupledRpm(speed, ratio);
 	}
 
 	private double getBrakeForce(double speed, double grip) {
 		double speedKmh = Math.abs(speed) * 72.0;
 		double lowSpeedAmount = 1.0 - MathHelper.clamp(speedKmh / 35.0, 0.0, 1.0);
 		double lowSpeedBoost = 1.0 + 0.90 * lowSpeedAmount;
-		return BRAKE_FORCE * grip * lowSpeedBoost;
-	}
-
-	private double lerp(double start, double end, double amount) {
-		return start + (end - start) * MathHelper.clamp(amount, 0.0, 1.0);
+		return this.vehicleSpec.brakeForce() * grip * lowSpeedBoost;
 	}
 
 	private double moveTowardZero(double value, double amount) {
@@ -977,10 +1022,16 @@ public class CarEntity extends BoatEntity {
 	}
 
 	private void updateEngineRpm(double speed, boolean shifting) {
-		double ratio = this.reverseEngaged ? REVERSE_RATIO : GEAR_RATIOS[this.currentGear];
-		double targetRpm = shifting
-				? Math.max(IDLE_RPM, this.engineRpm * 0.86)
-				: Math.min(REV_LIMITER_RPM, this.calculateCoupledRpm(speed, ratio));
+		double targetRpm;
+		if (this.isManualTransmission() && this.currentGear == 0) {
+			boolean revving = this.pressingForward || this.pressingBack;
+			targetRpm = revving ? Math.min(this.vehicleSpec.revLimiterRpm(), 3200.0) : this.vehicleSpec.idleRpm();
+		} else {
+			double ratio = (this.isManualTransmission() && this.currentGear == -1) || this.reverseEngaged
+					? this.vehicleSpec.reverseRatio() : this.vehicleSpec.gearRatio(Math.max(1, this.currentGear));
+			targetRpm = shifting ? Math.max(this.vehicleSpec.idleRpm(), this.engineRpm * 0.86)
+					: Math.min(this.vehicleSpec.revLimiterRpm(), this.calculateCoupledRpm(speed, ratio));
+		}
 		this.engineRpm += (targetRpm - this.engineRpm) * 0.35;
 	}
 
@@ -991,9 +1042,9 @@ public class CarEntity extends BoatEntity {
 		}
 
 		double speedRatio = Math.min(Math.abs(forwardSpeed) / 0.25, 1.0);
-		double highSpeedReduction = 1.0 - 0.55 * Math.min(Math.abs(forwardSpeed) / MAX_FORWARD_SPEED, 1.0);
+		double highSpeedReduction = 1.0 - 0.55 * Math.min(Math.abs(forwardSpeed) / this.vehicleSpec.maxForwardSpeed(), 1.0);
 		double direction = Math.signum(forwardSpeed);
-		float yawChange = (float) (steeringInput * direction * MAX_STEERING_PER_TICK * speedRatio * highSpeedReduction * grip);
+		float yawChange = (float) (steeringInput * direction * this.vehicleSpec.maxSteeringPerTick() * speedRatio * highSpeedReduction * grip);
 		this.setYaw(this.getYaw() + yawChange);
 	}
 
@@ -1039,11 +1090,36 @@ public class CarEntity extends BoatEntity {
 	}
 
 	private double getLateralVelocityRetained() {
-		return 1.0 - (1.0 - LATERAL_VELOCITY_RETAINED) * this.currentGrip;
+		return 1.0 - (1.0 - this.vehicleSpec.lateralVelocityRetained()) * this.currentGrip;
 	}
 
 	private boolean shouldUseSyncedVisualState() {
 		return this.getWorld().isClient && !this.clientPredictionActive;
+	}
+
+	public VehicleSpec getVehicleSpec() {
+		String trackedId = this.dataTracker.get(VEHICLE_SPEC_ID);
+		VehicleSpec trackedSpec = VehicleSpec.fromId(trackedId);
+		this.vehicleSpec = trackedSpec;
+		return trackedSpec;
+	}
+
+	public void setVehicleSpec(VehicleSpec vehicleSpec) {
+		VehicleSpec resolved = vehicleSpec == null ? VehicleSpec.HATCHBACK_AUTOMATIC : vehicleSpec;
+		this.vehicleSpec = resolved;
+		this.dataTracker.set(VEHICLE_SPEC_ID, resolved.id());
+		this.currentGear = resolved.isManual()
+				? MathHelper.clamp(this.currentGear, -1, resolved.gearCount())
+				: MathHelper.clamp(this.currentGear, 1, resolved.gearCount());
+		this.engineRpm = Math.max(resolved.idleRpm(), this.engineRpm);
+	}
+
+	public boolean isManualTransmission() {
+		return this.getVehicleSpec().isManual();
+	}
+
+	public boolean isAutomaticTransmission() {
+		return this.getVehicleSpec().isAutomatic();
 	}
 
 	public double getHorizontalSpeedKmh() {
@@ -1107,10 +1183,17 @@ public class CarEntity extends BoatEntity {
 		this.dataTracker.set(HEADLIGHTS_ON, headlightsOn);
 	}
 
-	public String getGearDisplay() {
-		boolean shifting = this.shouldUseSyncedVisualState()
+	public boolean isTransmissionShifting() {
+		return this.shouldUseSyncedVisualState()
 				? this.dataTracker.get(SYNCED_SHIFTING)
 				: this.shiftTicksRemaining > 0;
+	}
+
+	/**
+	 * Returns the selected/target gear even while the transmission is in its
+	 * short shift transition. This lets the HUD show where the shift is going.
+	 */
+	public String getSelectedGearDisplay() {
 		boolean reverse = this.shouldUseSyncedVisualState()
 				? this.dataTracker.get(SYNCED_REVERSE)
 				: this.reverseEngaged;
@@ -1121,12 +1204,27 @@ public class CarEntity extends BoatEntity {
 				? this.dataTracker.get(SYNCED_GEAR)
 				: this.currentGear;
 
-		if (shifting) {
-			return "N";
+		if (this.isManualTransmission()) {
+			if (gear < 0) return "R";
+			if (gear == 0) return "N";
+			return Integer.toString(gear);
 		}
-		if (reverse || forwardSpeed < -0.01) {
-			return "R";
+		if (reverse || forwardSpeed < -0.01) return "R";
+		return "D" + Math.max(1, gear);
+	}
+
+	public String getGearDisplay() {
+		boolean shifting = this.shouldUseSyncedVisualState() ? this.dataTracker.get(SYNCED_SHIFTING) : this.shiftTicksRemaining > 0;
+		boolean reverse = this.shouldUseSyncedVisualState() ? this.dataTracker.get(SYNCED_REVERSE) : this.reverseEngaged;
+		double forwardSpeed = this.shouldUseSyncedVisualState() ? this.dataTracker.get(SYNCED_FORWARD_SPEED) : this.lastForwardSpeed;
+		int gear = this.shouldUseSyncedVisualState() ? this.dataTracker.get(SYNCED_GEAR) : this.currentGear;
+		if (this.isManualTransmission()) {
+			if (gear < 0) return "R";
+			if (gear == 0 || shifting) return "N";
+			return Integer.toString(gear);
 		}
+		if (shifting) return "N";
+		if (reverse || forwardSpeed < -0.01) return "R";
 		return "D" + gear;
 	}
 

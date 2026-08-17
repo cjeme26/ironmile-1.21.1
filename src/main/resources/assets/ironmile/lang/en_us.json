@@ -1,11 +1,26 @@
 {
   "itemGroup.ironmile": "Iron Mile",
-  "item.ironmile.car": "Yellow Hatchback",
+  "item.ironmile.car": "Yellow Hatchback (Automatic)",
   "item.ironmile.summer_tires": "Summer Tires",
   "item.ironmile.all_season_tires": "All-Season Tires",
   "item.ironmile.winter_tires": "Winter Tires",
   "entity.ironmile.car": "Yellow Hatchback",
   "subtitles.ironmile.engine": "Engine running",
   "key.category.ironmile": "Iron Mile",
-  "key.ironmile.toggle_headlights": "Toggle Headlights"
+  "key.ironmile.toggle_headlights": "Toggle Headlights",
+  "item.ironmile.car_manual": "Yellow Hatchback (Manual)",
+  "tooltip.ironmile.tire_summer_line1": "Best for dry roads and warm weather.",
+  "tooltip.ironmile.tire_summer_line2": "Highest road grip in clear conditions.",
+  "tooltip.ironmile.tire_all_season_line1": "Balanced for mixed roads and weather.",
+  "tooltip.ironmile.tire_all_season_line2": "A dependable all-round choice.",
+  "tooltip.ironmile.tire_winter_line1": "Built for snow and icy surfaces.",
+  "tooltip.ironmile.tire_winter_line2": "The safest option in winter conditions.",
+  "tooltip.ironmile.brand": "Iron Mile",
+  "tooltip.ironmile.transmission_label": "Transmission: ",
+  "tooltip.ironmile.automatic": "Automatic",
+  "tooltip.ironmile.manual": "Manual",
+  "tooltip.ironmile.model_label": "Model: ",
+  "tooltip.ironmile.yellow_hatchback": "Yellow Hatchback",
+  "key.ironmile.shift_up": "Shift Up",
+  "key.ironmile.shift_down": "Shift Down"
 }

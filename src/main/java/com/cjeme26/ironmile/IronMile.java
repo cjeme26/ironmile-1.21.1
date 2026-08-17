@@ -8,6 +8,8 @@ import com.cjeme26.ironmile.item.ModItemGroups;
 import com.cjeme26.ironmile.sound.ModSounds;
 import com.cjeme26.ironmile.network.HeadlightTogglePayload;
 import com.cjeme26.ironmile.network.CarInputPayload;
+import com.cjeme26.ironmile.network.GearShiftPayload;
+import com.cjeme26.ironmile.network.GearSelectPayload;
 import com.cjeme26.ironmile.block.ModBlocks;
 
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
@@ -35,12 +37,26 @@ public class IronMile implements ModInitializer {
 		ModSounds.initialize();
 		PayloadTypeRegistry.playC2S().register(HeadlightTogglePayload.ID, HeadlightTogglePayload.CODEC);
 		PayloadTypeRegistry.playC2S().register(CarInputPayload.ID, CarInputPayload.CODEC);
+		PayloadTypeRegistry.playC2S().register(GearShiftPayload.ID, GearShiftPayload.CODEC);
+		PayloadTypeRegistry.playC2S().register(GearSelectPayload.ID, GearSelectPayload.CODEC);
 		ServerPlayNetworking.registerGlobalReceiver(HeadlightTogglePayload.ID, (payload, context) -> {
 			var entity = context.player().getWorld().getEntityById(payload.entityId());
 			if (entity instanceof com.cjeme26.ironmile.entity.CarEntity car
 					&& car.getControllingPassenger() == context.player()) {
 				car.setHeadlightsOn(!car.areHeadlightsOn());
 			}
+		});
+		ServerPlayNetworking.registerGlobalReceiver(GearSelectPayload.ID, (payload, context) -> {
+			var entity = context.player().getWorld().getEntityById(payload.entityId());
+			if (entity instanceof com.cjeme26.ironmile.entity.CarEntity car
+					&& car.getControllingPassenger() == context.player()
+					&& car.isManualTransmission()) {
+				car.selectManualGear(payload.gear());
+			}
+		});
+		ServerPlayNetworking.registerGlobalReceiver(GearShiftPayload.ID, (payload, context) -> {
+			var entity = context.player().getWorld().getEntityById(payload.entityId());
+			if (entity instanceof com.cjeme26.ironmile.entity.CarEntity car && car.getControllingPassenger() == context.player() && car.isManualTransmission()) car.manualShift(payload.direction());
 		});
 		ServerPlayNetworking.registerGlobalReceiver(CarInputPayload.ID, (payload, context) -> {
 			var entity = context.player().getWorld().getEntityById(payload.entityId());
@@ -57,7 +73,7 @@ public class IronMile implements ModInitializer {
 				car.setInputs(payload.left(), payload.right(), payload.forward(), payload.back());
 			}
 		});
-		LOGGER.info("Iron Mile prototype initialized");
+		LOGGER.info("Iron Mile initialized");
 	}
 
 	public static Identifier id(String path) {

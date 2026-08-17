@@ -17,6 +17,7 @@ public final class ModItemGroups {
 					.icon(() -> new ItemStack(ModItems.CAR))
 					.entries((displayContext, entries) -> {
 						entries.add(ModItems.CAR);
+						entries.add(ModItems.CAR_MANUAL);
 						entries.add(ModItems.SUMMER_TIRES);
 						entries.add(ModItems.ALL_SEASON_TIRES);
 						entries.add(ModItems.WINTER_TIRES);

@@ -1,0 +1,9 @@
+IronMile dismount nudge fix
+
+This patch removes the tiny immediate client rewind that could happen when
+leaving a moving car. Small (< 0.18 block / 4 degree) differences between the
+last server snapshot and the locally predicted position are ignored at the
+exact handoff moment. Larger differences still reconcile normally.
+
+Apply from the IronMile project root without opening the ZIP:
+  ditto -x -k "$HOME/Downloads/IronMile-dismount-nudge-fix.zip" .
