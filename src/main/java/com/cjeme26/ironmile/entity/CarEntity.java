@@ -1,6 +1,9 @@
 package com.cjeme26.ironmile.entity;
 
 import com.cjeme26.ironmile.item.TireItem;
+import net.fabricmc.fabric.api.screenhandler.v1.ExtendedScreenHandlerFactory;
+import com.cjeme26.ironmile.screen.FuelScreenData;
+import com.cjeme26.ironmile.screen.FuelScreenHandler;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.entity.Entity;
@@ -13,6 +16,7 @@ import net.minecraft.entity.data.DataTracker;
 import net.minecraft.entity.data.TrackedData;
 import net.minecraft.entity.data.TrackedDataHandlerRegistry;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.entity.vehicle.BoatEntity;
 import net.minecraft.inventory.Inventories;
 import net.minecraft.inventory.Inventory;
@@ -29,8 +33,10 @@ import net.minecraft.util.math.Vec3d;
 import net.minecraft.util.collection.DefaultedList;
 import net.minecraft.util.shape.VoxelShape;
 import net.minecraft.world.World;
+import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.screen.GenericContainerScreenHandler;
+import net.minecraft.screen.ScreenHandler;
 import net.minecraft.screen.ScreenHandlerType;
 import net.minecraft.screen.SimpleNamedScreenHandlerFactory;
 
@@ -55,6 +61,10 @@ public class CarEntity extends BoatEntity implements Inventory {
 			TrackedDataHandlerRegistry.BOOLEAN
 	);
 	private static final TrackedData<Integer> ENGINE_START_TICKS = DataTracker.registerData(
+			CarEntity.class,
+			TrackedDataHandlerRegistry.INTEGER
+	);
+	private static final TrackedData<Integer> FUEL_MILLILITERS = DataTracker.registerData(
 			CarEntity.class,
 			TrackedDataHandlerRegistry.INTEGER
 	);
@@ -117,12 +127,19 @@ public class CarEntity extends BoatEntity implements Inventory {
 	private static final String TIRE_NBT_KEY = "IronMileTireType";
 	private static final String HEADLIGHTS_NBT_KEY = "IronMileHeadlightsOn";
 	private static final String ENGINE_ON_NBT_KEY = "IronMileEngineOn";
+	private static final String FUEL_NBT_KEY = "IronMileFuelMilliliters";
 	private static final String HANDBRAKE_NBT_KEY = "IronMileHandbrakeOn";
 	private static final String AUTOMATIC_SELECTOR_NBT_KEY = "IronMileAutomaticSelector";
 	private static final String VEHICLE_SPEC_NBT_KEY = "IronMileVehicleSpec";
 	private static final String MANUAL_GEAR_NBT_KEY = "IronMileManualGear";
 	private static final String TRUNK_NBT_KEY = "IronMileTrunk";
 	private static final int TRUNK_SIZE = 9;
+	private static final int FUEL_CAPACITY_ML = 45_000;
+	private static final int INITIAL_FUEL_ML = 11_250;
+	private static final int PROTOTYPE_FUEL_ITEM_ML = 5_000;
+	private static final double IDLE_FUEL_USE_ML_PER_TICK = 0.12;
+	private static final double RPM_FUEL_USE_ML_PER_TICK = 0.18;
+	private static final double THROTTLE_FUEL_USE_ML_PER_TICK = 0.70;
 	private static final int AUTO_PARK = 0;
 	private static final int AUTO_REVERSE = 1;
 	/* Legacy saved value from the earlier PRND prototype; no longer selectable. */
@@ -197,6 +214,7 @@ public class CarEntity extends BoatEntity implements Inventory {
 	private double clutchEngagement = 1.0;
 	private int stallCandidateTicks;
 	private boolean engineStalled;
+	private double fuelUseAccumulatorMl;
 	private boolean reverseEngaged;
 	/** 1 = front bumper held against an obstacle, -1 = rear, 0 = clear. */
 	private int bumperContactDirection;
@@ -270,6 +288,7 @@ public class CarEntity extends BoatEntity implements Inventory {
 		builder.add(HEADLIGHTS_ON, false);
 		builder.add(ENGINE_ON, false);
 		builder.add(ENGINE_START_TICKS, 0);
+		builder.add(FUEL_MILLILITERS, INITIAL_FUEL_ML);
 		builder.add(HANDBRAKE_ON, true);
 		builder.add(AUTOMATIC_SELECTOR, AUTO_PARK);
 		builder.add(VEHICLE_SPEC_ID, VehicleSpec.HATCHBACK_AUTOMATIC.id());
@@ -292,6 +311,7 @@ public class CarEntity extends BoatEntity implements Inventory {
 		nbt.putInt(TIRE_NBT_KEY, this.getTireType().ordinal());
 		nbt.putBoolean(HEADLIGHTS_NBT_KEY, this.areHeadlightsOn());
 		nbt.putBoolean(ENGINE_ON_NBT_KEY, this.isEngineRunning());
+		nbt.putInt(FUEL_NBT_KEY, this.getFuelMilliliters());
 		nbt.putBoolean(HANDBRAKE_NBT_KEY, this.isHandbrakeOn());
 		nbt.putInt(AUTOMATIC_SELECTOR_NBT_KEY, this.dataTracker.get(AUTOMATIC_SELECTOR));
 		nbt.putString(VEHICLE_SPEC_NBT_KEY, this.getVehicleSpec().id());
@@ -313,6 +333,9 @@ public class CarEntity extends BoatEntity implements Inventory {
 		}
 		if (nbt.contains(ENGINE_ON_NBT_KEY)) {
 			this.setEngineRunning(nbt.getBoolean(ENGINE_ON_NBT_KEY));
+		}
+		if (nbt.contains(FUEL_NBT_KEY)) {
+			this.setFuelMilliliters(nbt.getInt(FUEL_NBT_KEY));
 		}
 		if (nbt.contains(HANDBRAKE_NBT_KEY)) {
 			this.setHandbrakeOn(nbt.getBoolean(HANDBRAKE_NBT_KEY));
@@ -353,12 +376,19 @@ public class CarEntity extends BoatEntity implements Inventory {
 		}
 
 		/*
-		 * The CC0 model has no animated hatch yet, so storage is intentionally
-		 * abstract for now. Sneak + right-click beside the car opens its trunk;
-		 * plain right-click keeps the existing enter/drive interaction.
+		 * Shift + right-click is now spatial:
+		 * - stand by a rear-side quarter of the car -> fuel filler
+		 * - elsewhere -> trunk
+		 *
+		 * This uses the player's position around the temporary CC0 model, rather
+		 * than requiring a visible fuel-door mesh that the model does not have.
 		 */
 		if (player.isSneaking() && player.getVehicle() != this) {
-			if (!this.getWorld().isClient) {
+			if (this.isPlayerAtFuelFiller(player)) {
+				if (!this.getWorld().isClient && player instanceof ServerPlayerEntity serverPlayer) {
+					this.openFuelScreen(serverPlayer);
+				}
+			} else if (!this.getWorld().isClient) {
 				player.openHandledScreen(new SimpleNamedScreenHandlerFactory(
 						(syncId, playerInventory, openingPlayer) ->
 								new GenericContainerScreenHandler(
@@ -375,6 +405,47 @@ public class CarEntity extends BoatEntity implements Inventory {
 		}
 
 		return super.interact(player, hand);
+	}
+
+	private boolean isPlayerAtFuelFiller(PlayerEntity player) {
+		double dx = player.getX() - this.getX();
+		double dz = player.getZ() - this.getZ();
+		float yawRadians = this.getYaw() * MathHelper.RADIANS_PER_DEGREE;
+
+		Vec3d forward = new Vec3d(-MathHelper.sin(yawRadians), 0.0, MathHelper.cos(yawRadians));
+		Vec3d right = new Vec3d(forward.z, 0.0, -forward.x);
+
+		double localForward = dx * forward.x + dz * forward.z;
+		double localSide = dx * right.x + dz * right.z;
+
+		/*
+		 * Broad on purpose while the CC0 shell has no visible fuel door. Either
+		 * rear quarter works, which makes the prototype interaction discoverable.
+		 */
+		return localForward < -0.20 && Math.abs(localSide) > 0.45;
+	}
+
+	private void openFuelScreen(ServerPlayerEntity player) {
+		player.openHandledScreen(new ExtendedScreenHandlerFactory<FuelScreenData>() {
+			@Override
+			public FuelScreenData getScreenOpeningData(ServerPlayerEntity openingPlayer) {
+				return new FuelScreenData(CarEntity.this.getId());
+			}
+
+			@Override
+			public Text getDisplayName() {
+				return Text.translatable("container.ironmile.fuel");
+			}
+
+			@Override
+			public ScreenHandler createMenu(
+					int syncId,
+					PlayerInventory playerInventory,
+					PlayerEntity openingPlayer
+			) {
+				return new FuelScreenHandler(syncId, playerInventory, CarEntity.this);
+			}
+		});
 	}
 
 	@Override
@@ -568,6 +639,10 @@ public class CarEntity extends BoatEntity implements Inventory {
 
 		if (!this.getWorld().isClient || this.isLocallyControlledClient()) {
 			this.tickClutchState();
+		}
+
+		if (!this.getWorld().isClient) {
+			this.tickFuelConsumption();
 		}
 
 		if (this.getWorld().isClient) {
@@ -1318,11 +1393,108 @@ public class CarEntity extends BoatEntity implements Inventory {
 			return;
 		}
 
+		if (this.isOutOfFuel()) {
+			this.engineRpm = 0.0;
+			return;
+		}
+
 		this.dataTracker.set(ENGINE_ON, false);
 		this.dataTracker.set(ENGINE_START_TICKS, ENGINE_START_DURATION_TICKS);
 		this.engineStalled = false;
 		this.stallCandidateTicks = 0;
 		this.engineRpm = 0.0;
+	}
+
+	private void tickFuelConsumption() {
+		if (!this.isEngineRunning()) {
+			this.fuelUseAccumulatorMl = 0.0;
+			return;
+		}
+
+		if (this.isOutOfFuel()) {
+			this.setEngineRunning(false);
+			return;
+		}
+
+		double idleRpm = this.vehicleSpec.idleRpm();
+		double rpmRange = Math.max(1.0, this.vehicleSpec.revLimiterRpm() - idleRpm);
+		double rpmFactor = MathHelper.clamp((this.engineRpm - idleRpm) / rpmRange, 0.0, 1.0);
+		double throttleFactor = this.isEngineThrottlePressed() ? 1.0 : 0.0;
+
+		double useThisTick = IDLE_FUEL_USE_ML_PER_TICK
+				+ RPM_FUEL_USE_ML_PER_TICK * rpmFactor
+				+ THROTTLE_FUEL_USE_ML_PER_TICK
+						* throttleFactor
+						* (0.35 + 0.65 * rpmFactor);
+
+		this.fuelUseAccumulatorMl += useThisTick;
+		int wholeMilliliters = (int) Math.floor(this.fuelUseAccumulatorMl);
+		if (wholeMilliliters <= 0) {
+			return;
+		}
+
+		this.fuelUseAccumulatorMl -= wholeMilliliters;
+		this.setFuelMilliliters(this.getFuelMilliliters() - wholeMilliliters);
+
+		if (this.isOutOfFuel()) {
+			this.setEngineRunning(false);
+		}
+	}
+
+	private boolean isEngineThrottlePressed() {
+		if (this.isManualTransmission() && this.currentGear == 0) {
+			return this.pressingForward;
+		}
+		if (this.isAutomaticTransmission() && this.getAutomaticSelector() == AUTO_PARK) {
+			return this.pressingForward;
+		}
+		return this.isThrottleInputPressed();
+	}
+
+	public int getFuelMilliliters() {
+		return MathHelper.clamp(this.dataTracker.get(FUEL_MILLILITERS), 0, FUEL_CAPACITY_ML);
+	}
+
+	public int getFuelCapacityMilliliters() {
+		return FUEL_CAPACITY_ML;
+	}
+
+	public double getFuelLiters() {
+		return this.getFuelMilliliters() / 1000.0;
+	}
+
+	public double getFuelCapacityLiters() {
+		return FUEL_CAPACITY_ML / 1000.0;
+	}
+
+	public double getFuelFraction() {
+		return this.getFuelMilliliters() / (double) FUEL_CAPACITY_ML;
+	}
+
+	public boolean isOutOfFuel() {
+		return this.getFuelMilliliters() <= 0;
+	}
+
+	public void setFuelMilliliters(int milliliters) {
+		this.dataTracker.set(
+				FUEL_MILLILITERS,
+				MathHelper.clamp(milliliters, 0, FUEL_CAPACITY_ML)
+		);
+	}
+
+	public int addFuelMilliliters(int requestedMilliliters) {
+		if (requestedMilliliters <= 0) {
+			return 0;
+		}
+
+		int before = this.getFuelMilliliters();
+		int after = Math.min(FUEL_CAPACITY_ML, before + requestedMilliliters);
+		this.setFuelMilliliters(after);
+		return after - before;
+	}
+
+	public int getPrototypeFuelItemMilliliters() {
+		return PROTOTYPE_FUEL_ITEM_ML;
 	}
 
 	private void tickClutchState() {

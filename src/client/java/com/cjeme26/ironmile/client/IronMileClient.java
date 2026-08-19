@@ -2,6 +2,7 @@ package com.cjeme26.ironmile.client;
 
 import com.cjeme26.ironmile.client.render.CarEntityRenderer;
 import com.cjeme26.ironmile.client.sound.EngineSoundManager;
+import com.cjeme26.ironmile.client.screen.FuelScreen;
 import com.cjeme26.ironmile.entity.ModEntities;
 import com.cjeme26.ironmile.entity.CarEntity;
 import com.cjeme26.ironmile.network.HeadlightTogglePayload;
@@ -10,6 +11,7 @@ import com.cjeme26.ironmile.network.GearSelectPayload;
 import com.cjeme26.ironmile.network.GearShiftPayload;
 import com.cjeme26.ironmile.network.IgnitionTogglePayload;
 import com.cjeme26.ironmile.network.ExitVehiclePayload;
+import com.cjeme26.ironmile.screen.ModScreenHandlers;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
@@ -17,6 +19,7 @@ import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.screen.ingame.HandledScreens;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.render.entity.EmptyEntityRenderer;
 import net.minecraft.client.util.InputUtil;
@@ -61,6 +64,7 @@ public class IronMileClient implements ClientModInitializer {
 				"key.ironmile.exit_vehicle", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_X, "key.category.ironmile"));
 		EntityRendererRegistry.register(ModEntities.CAR, CarEntityRenderer::new);
 		EntityRendererRegistry.register(ModEntities.HEADLIGHT_MARKER, EmptyEntityRenderer::new);
+		HandledScreens.register(ModScreenHandlers.FUEL, FuelScreen::new);
 		ClientTickEvents.END_CLIENT_TICK.register(EngineSoundManager::tick);
 
 		ClientTickEvents.START_CLIENT_TICK.register(client -> {
@@ -234,79 +238,333 @@ public class IronMileClient implements ClientModInitializer {
 				return;
 			}
 
-			String speed = String.format(Locale.ROOT, "%.0f km/h", Math.abs(car.getHorizontalSpeedKmh()));
-			String status = car.isManualTransmission()
-					? speed
-					: speed + "     " + automaticSelectorHud(car.getAutomaticSelectorDisplay());
+			int screenWidth = client.getWindow().getScaledWidth();
+			int centerX = screenWidth / 2;
 
-			float scale = 1.35F;
-			drawContext.getMatrices().push();
-			drawContext.getMatrices().scale(scale, scale, 1.0F);
-			int logicalWidth = (int) (client.getWindow().getScaledWidth() / scale);
-			int x = (logicalWidth - client.textRenderer.getWidth(status)) / 2;
-			drawContext.drawTextWithShadow(client.textRenderer, Text.literal(status), x, 8, 0xFFFFFF);
-			drawContext.getMatrices().pop();
+			drawDrivingSpeedAndRpm(drawContext, client, car);
+			drawFuelGauge(drawContext, client, car.getFuelFraction(), 14, 14);
 
+			if (car.isAutomaticTransmission()) {
+				drawAutomaticSelector(
+						drawContext,
+						client,
+						car.getAutomaticSelectorDisplay(),
+						screenWidth - 66,
+						12
+				);
+			}
+
+			drawDashboardIndicators(drawContext, client, car);
+
+			/*
+			 * Engine-off is intentionally silent in the HUD. Only states that
+			 * require immediate attention interrupt the normal dashboard.
+			 */
 			String vehicleState = "";
+			int stateColor = 0xFFFFC857;
 			if (car.isEngineStarting()) {
 				vehicleState = "STARTING...";
+			} else if (car.isOutOfFuel()) {
+				vehicleState = "OUT OF FUEL";
 			} else if (car.isEngineStalled()) {
 				vehicleState = "STALLED";
-			} else if (!car.isEngineRunning()) {
-				vehicleState = "ENGINE OFF";
+				stateColor = 0xFFFF6262;
 			}
+
 			if (!vehicleState.isEmpty()) {
-				int stateX = (client.getWindow().getScaledWidth()
-						- client.textRenderer.getWidth(vehicleState)) / 2;
-				int stateColor = 0xFFDDDDDD;
+				int stateX = (screenWidth - client.textRenderer.getWidth(vehicleState)) / 2;
 				drawContext.drawTextWithShadow(
 						client.textRenderer,
 						Text.literal(vehicleState),
 						stateX,
-						26,
+						55,
 						stateColor
 				);
 			}
 
 			if (car.isManualTransmission()) {
 				drawManualGearStick(drawContext, client, car.getSelectedGearDisplay());
-
 			}
 		});
 	}
 
-	private static String automaticSelectorHud(String selected) {
-		StringBuilder hud = new StringBuilder();
-		for (String option : new String[] {"P", "D", "R"}) {
-			if (!hud.isEmpty()) {
-				hud.append(" ");
-			}
-			hud.append(option.equals(selected) ? "[" + option + "]" : option);
+	private static void drawDrivingSpeedAndRpm(
+			net.minecraft.client.gui.DrawContext drawContext,
+			MinecraftClient client,
+			CarEntity car
+	) {
+		String speed = String.format(Locale.ROOT, "%.0f km/h", Math.abs(car.getHorizontalSpeedKmh()));
+		float speedScale = 1.35F;
+
+		drawContext.getMatrices().push();
+		drawContext.getMatrices().scale(speedScale, speedScale, 1.0F);
+		int logicalWidth = (int) (client.getWindow().getScaledWidth() / speedScale);
+		int speedX = (logicalWidth - client.textRenderer.getWidth(speed)) / 2;
+		drawContext.drawTextWithShadow(
+				client.textRenderer,
+				Text.literal(speed),
+				speedX,
+				6,
+				0xFFFFFFFF
+		);
+		drawContext.getMatrices().pop();
+
+		String rpm = car.getEngineRpm() + " RPM";
+		int rpmColor = car.isManualTransmission()
+				? getManualRpmColor(car)
+				: 0xFFD8D8D8;
+		int rpmWidth = client.textRenderer.getWidth(rpm);
+		int rpmX = (client.getWindow().getScaledWidth() - rpmWidth) / 2;
+
+		drawContext.drawTextWithShadow(
+				client.textRenderer,
+				Text.literal(rpm),
+				rpmX,
+				27,
+				rpmColor
+		);
+
+		if (car.isManualTransmission() && clutchKey.isPressed()) {
+			/*
+			 * Clutch state appears only while the pedal is actually held.
+			 * No box or warning background: it is an operating-state hint,
+			 * not a fault lamp.
+			 */
+			drawContext.drawTextWithShadow(
+					client.textRenderer,
+					Text.literal("C"),
+					rpmX + rpmWidth + 6,
+					27,
+					0xFFFFC857
+			);
 		}
-		return hud.toString();
 	}
+
+	private static int getManualRpmColor(CarEntity car) {
+		if (!car.isEngineRunning() || car.isEngineStarting()) {
+			return 0xFFBDBDBD;
+		}
+
+		int rpm = car.getEngineRpm();
+		double limiter = Math.max(1.0, car.getVehicleSpec().revLimiterRpm());
+
+		/*
+		 * High-RPM guidance always applies, but the thresholds are deliberately
+		 * generous so the HUD does not nag the player during ordinary driving.
+		 */
+		if (rpm >= limiter * 0.96) {
+			return 0xFFFF6262;
+		}
+		if (rpm >= limiter * 0.84) {
+			return 0xFFFFC857;
+		}
+
+		String gear = car.getSelectedGearDisplay();
+
+		/*
+		 * Clutch down or Neutral means the wheels are intentionally disconnected
+		 * from the engine. Low RPM is therefore normal and should never look like
+		 * a fault. Idle RPM stays green.
+		 */
+		if (clutchKey.isPressed() || "N".equals(gear)) {
+			return 0xFF66D17A;
+		}
+
+		double speedKmh = Math.abs(car.getHorizontalSpeedKmh());
+
+		/*
+		 * First gear at a standstill is a normal place to be at idle. Only warn
+		 * about low RPM when the engine is actually under load and the car is
+		 * already moving enough for "lugging" to be meaningful.
+		 */
+		boolean loaded = car.hasThrottleInput() && speedKmh > 3.0;
+		if (loaded) {
+			if (rpm < 650) {
+				return 0xFFFF6262;
+			}
+			if (rpm < 1000) {
+				return 0xFFFFC857;
+			}
+		}
+
+		return 0xFF66D17A;
+	}
+
+
+	private static void drawFuelGauge(
+			net.minecraft.client.gui.DrawContext drawContext,
+			MinecraftClient client,
+			double fuelFraction,
+			int x,
+			int y
+	) {
+		int segments = 8;
+		int segmentWidth = 4;
+		int segmentHeight = 5;
+		int gap = 1;
+		int filled = (int) Math.round(
+				Math.max(0.0, Math.min(1.0, fuelFraction)) * segments
+		);
+
+		int width = 62;
+		int height = 16;
+		// Extra 2 px above F/E; bottom edge stays where it was.
+		drawCutCornerPanel(drawContext, x - 3, y - 5, width, height);
+
+		drawContext.drawText(
+				client.textRenderer,
+				Text.literal("F"),
+				x,
+				y - 1,
+				0xFFE2E2E2,
+				false
+		);
+
+		int barX = x + 9;
+		for (int i = 0; i < segments; i++) {
+			int sx = barX + i * (segmentWidth + gap);
+			drawContext.fill(
+					sx,
+					y,
+					sx + segmentWidth,
+					y + segmentHeight,
+					i < filled ? 0xFFFFB41F : 0xFF4C4C4C
+			);
+		}
+
+		int eX = barX + segments * (segmentWidth + gap) + 2;
+		drawContext.drawText(
+				client.textRenderer,
+				Text.literal("E"),
+				eX,
+				y - 1,
+				0xFFE2E2E2,
+				false
+		);
+	}
+
+
+	private static void drawAutomaticSelector(
+			net.minecraft.client.gui.DrawContext drawContext,
+			MinecraftClient client,
+			String selected,
+			int x,
+			int y
+	) {
+		int width = 54;
+		int height = 18;
+		drawCutCornerPanel(drawContext, x, y, width, height);
+
+		String[] options = {"P", "D", "R"};
+		int[] positions = {9, 27, 45};
+
+		for (int i = 0; i < options.length; i++) {
+			boolean active = options[i].equals(selected);
+			int center = x + positions[i];
+			int textWidth = client.textRenderer.getWidth(options[i]);
+
+			if (active) {
+				// Amber selected tile mirrors the selected manual gear.
+				drawContext.fill(
+						center - 6,
+						y + 3,
+						center + 6,
+						y + 15,
+						0xFFFFB41F
+				);
+			}
+
+			drawContext.drawText(
+					client.textRenderer,
+					Text.literal(options[i]),
+					center - textWidth / 2,
+					y + 5,
+					active ? 0xFF202020 : 0xFFB8B8B8,
+					false
+			);
+		}
+	}
+
+
+	private static void drawDashboardIndicators(
+			net.minecraft.client.gui.DrawContext drawContext,
+			MinecraftClient client,
+			CarEntity car
+	) {
+		boolean headlights = car.areHeadlightsOn();
+		boolean lowFuel = car.getFuelFraction() <= 0.15;
+		boolean engineWarning = car.isEngineStalled() || car.isOutOfFuel();
+
+		int inactive = 0x70454545;
+		int x = 14;
+		int y = client.getWindow().getScaledHeight() - 24;
+		int spacing = 18;
+
+		drawContext.drawTextWithShadow(
+				client.textRenderer,
+				Text.literal("H"),
+				x,
+				y,
+				headlights ? 0xFF62C84B : inactive
+		);
+		drawContext.drawTextWithShadow(
+				client.textRenderer,
+				Text.literal("F"),
+				x + spacing,
+				y,
+				lowFuel ? 0xFFFFB41F : inactive
+		);
+		drawContext.drawTextWithShadow(
+				client.textRenderer,
+				Text.literal("E"),
+				x + spacing * 2,
+				y,
+				engineWarning ? 0xFFFF4141 : inactive
+		);
+	}
+
+
+	private static void drawCutCornerPanel(
+			net.minecraft.client.gui.DrawContext drawContext,
+			int x,
+			int y,
+			int width,
+			int height
+	) {
+		int border = 0x9A56616B;
+		int inside = 0xB52A3036;
+
+		// 2-pixel cut corners give the compact instruments softer Minecraft edges.
+		drawContext.fill(x + 2, y, x + width - 2, y + height, border);
+		drawContext.fill(x, y + 2, x + width, y + height - 2, border);
+
+		drawContext.fill(x + 2, y + 1, x + width - 2, y + height - 1, inside);
+		drawContext.fill(x + 1, y + 2, x + width - 1, y + height - 2, inside);
+	}
+
 
 	private static void drawManualGearStick(net.minecraft.client.gui.DrawContext drawContext,
 			MinecraftClient client, String gear) {
-		int width = 64;
-		int height = 56;
+		int width = 58;
+		int height = 58;
 		int x = client.getWindow().getScaledWidth() - width - 12;
-		int y = client.getWindow().getScaledHeight() - height - 12;
+		int y = 10;
 
-		int panelOuter = mouseShifterActive ? 0x92101010 : 0x74101010;
-		int panelInner = mouseShifterActive ? 0x7D202020 : 0x5D202020;
-		int line = mouseShifterActive ? 0xFFD4D4D4 : 0xA69A9A9A;
-		int label = mouseShifterActive ? 0xFFFFFFFF : 0xFFC2C2C2;
+		int line = mouseShifterActive ? 0xFFE1E1E1 : 0xFF888888;
+		int label = mouseShifterActive ? 0xFFE8E8E8 : 0xFFB0B0B0;
 
-		drawContext.fill(x, y, x + width, y + height, panelOuter);
-		drawContext.fill(x + 1, y + 1, x + width - 1, y + height - 1, panelInner);
+		/*
+		 * The gate/labels keep their existing coordinates, while the panel gains
+		 * two pixels above 1/3/5 and two pixels below 2/4/6.
+		 */
+		drawCutCornerPanel(drawContext, x, y - 2, width, height);
 
-		int left = x + 15;
-		int middle = x + 31;
-		int right = x + 47;
-		int top = y + 15;
-		int neutral = y + 28;
-		int bottom = y + 41;
+		int left = x + 13;
+		int middle = x + 28;
+		int right = x + 43;
+		int top = y + 14;
+		int neutral = y + 27;
+		int bottom = y + 40;
 
 		// Deliberately simple, hard-pixel Minecraft-style H pattern.
 		drawContext.fill(left, top, left + 2, bottom + 1, line);
@@ -317,14 +575,22 @@ public class IronMileClient implements ClientModInitializer {
 		boolean reverseLockout = reverseLockoutLatched;
 		boolean showingReverse = mouseShifterActive ? reverseLockout : "R".equals(gear);
 		String upperLeftLabel = showingReverse ? "R" : "1";
-		int upperLeftColor = showingReverse ? 0xFFFF5555 : label;
 
-		drawContext.drawText(client.textRenderer, Text.literal(upperLeftLabel), left - 3, y + 3, upperLeftColor, false);
-		drawContext.drawText(client.textRenderer, Text.literal("3"), middle - 3, y + 3, label, false);
-		drawContext.drawText(client.textRenderer, Text.literal("5"), right - 3, y + 3, label, false);
-		drawContext.drawText(client.textRenderer, Text.literal("2"), left - 3, y + 44, label, false);
-		drawContext.drawText(client.textRenderer, Text.literal("4"), middle - 3, y + 44, label, false);
-		drawContext.drawText(client.textRenderer, Text.literal("6"), right - 3, y + 44, label, false);
+		drawGearLabel(
+				drawContext,
+				client,
+				upperLeftLabel,
+				left - 3,
+				y + 3,
+				upperLeftLabel.equals(gear),
+				showingReverse ? 0xFFFF6262 : 0xFFFFC857,
+				label
+		);
+		drawGearLabel(drawContext, client, "3", middle - 3, y + 3, "3".equals(gear), 0xFFFFC857, label);
+		drawGearLabel(drawContext, client, "5", right - 3, y + 3, "5".equals(gear), 0xFFFFC857, label);
+		drawGearLabel(drawContext, client, "2", left - 3, y + 44, "2".equals(gear), 0xFFFFC857, label);
+		drawGearLabel(drawContext, client, "4", middle - 3, y + 43, "4".equals(gear), 0xFFFFC857, label);
+		drawGearLabel(drawContext, client, "6", right - 3, y + 43, "6".equals(gear), 0xFFFFC857, label);
 
 		double px;
 		double py;
@@ -342,9 +608,48 @@ public class IronMileClient implements ClientModInitializer {
 
 		// No diagonal "debug" shaft: only the selector itself moves.
 		drawContext.fill(knobX - 4, knobY - 4, knobX + 5, knobY + 5, 0xFF151515);
-		drawContext.fill(knobX - 3, knobY - 3, knobX + 4, knobY + 4,
-				mouseShifterActive ? 0xFFFFFFFF : 0xFFE0E0E0);
+		drawContext.fill(
+				knobX - 3,
+				knobY - 3,
+				knobX + 4,
+				knobY + 4,
+				mouseShifterActive ? 0xFFFFFFFF : 0xFFFFC857
+		);
 		drawContext.fill(knobX - 1, knobY - 1, knobX + 2, knobY + 2, 0xFF666666);
+	}
+
+	private static void drawGearLabel(
+			net.minecraft.client.gui.DrawContext drawContext,
+			MinecraftClient client,
+			String text,
+			int x,
+			int y,
+			boolean selected,
+			int selectedColor,
+			int inactiveColor
+	) {
+		if (selected) {
+			int width = client.textRenderer.getWidth(text);
+			drawContext.fill(x - 2, y - 1, x + width + 2, y + 9, 0xFFFFB41F);
+			drawContext.drawText(
+					client.textRenderer,
+					Text.literal(text),
+					x,
+					y,
+					0xFF202020,
+					false
+			);
+			return;
+		}
+
+		drawContext.drawText(
+				client.textRenderer,
+				Text.literal(text),
+				x,
+				y,
+				inactiveColor,
+				false
+		);
 	}
 
 	public static boolean handleShifterMouseButton(int button, int action) {

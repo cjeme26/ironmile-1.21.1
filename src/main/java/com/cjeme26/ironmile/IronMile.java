@@ -6,6 +6,7 @@ import com.cjeme26.ironmile.entity.ModEntities;
 import com.cjeme26.ironmile.item.ModItems;
 import com.cjeme26.ironmile.item.ModItemGroups;
 import com.cjeme26.ironmile.sound.ModSounds;
+import com.cjeme26.ironmile.screen.ModScreenHandlers;
 import com.cjeme26.ironmile.network.HeadlightTogglePayload;
 import com.cjeme26.ironmile.network.CarInputPayload;
 import com.cjeme26.ironmile.network.GearShiftPayload;
@@ -37,6 +38,7 @@ public class IronMile implements ModInitializer {
 		ModItems.initialize();
 		ModItemGroups.initialize();
 		ModSounds.initialize();
+		ModScreenHandlers.initialize();
 		PayloadTypeRegistry.playC2S().register(HeadlightTogglePayload.ID, HeadlightTogglePayload.CODEC);
 		PayloadTypeRegistry.playC2S().register(CarInputPayload.ID, CarInputPayload.CODEC);
 		PayloadTypeRegistry.playC2S().register(GearShiftPayload.ID, GearShiftPayload.CODEC);
@@ -85,8 +87,8 @@ public class IronMile implements ModInitializer {
 			} else if (car.isAutomaticTransmission()) {
 				/*
 				 * Existing fallback controls are reused:
-				 * R (direction +1) moves D -> N -> R -> P.
-				 * F (direction -1) moves P -> R -> N -> D.
+				 * R (direction +1) moves R -> D -> P.
+				 * F (direction -1) moves P -> D -> R.
 				 */
 				car.automaticSelectorStep(-Integer.signum(payload.direction()));
 			}
