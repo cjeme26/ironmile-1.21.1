@@ -2285,14 +2285,37 @@ public class CarEntity extends BoatEntity implements Inventory {
 
 	private void applySteering(double forwardSpeed, double grip) {
 		int steeringInput = (this.pressingRight ? 1 : 0) - (this.pressingLeft ? 1 : 0);
-		if (steeringInput == 0 || Math.abs(forwardSpeed) < 0.01) {
+		double speed = Math.abs(forwardSpeed);
+		if (steeringInput == 0 || speed < 0.01) {
 			return;
 		}
 
-		double speedRatio = Math.min(Math.abs(forwardSpeed) / 0.25, 1.0);
-		double highSpeedReduction = 1.0 - 0.55 * Math.min(Math.abs(forwardSpeed) / this.vehicleSpec.maxForwardSpeed(), 1.0);
+		/*
+		 * Keep IronMile's speed-sensitive steering, but give the compact hatchback
+		 * more usable steering lock. The extra authority fades smoothly with speed:
+		 *
+		 *   parking / very low speed: about +28%
+		 *   normal road speed:       about +15-22%
+		 *   maximum speed:           about +8%
+		 *
+		 * This preserves high-speed stability while making intersections and
+		 * tight parking manoeuvres much less cumbersome.
+		 */
+		double speedRatio = Math.min(speed / 0.25, 1.0);
+		double speedFraction = Math.min(speed / this.vehicleSpec.maxForwardSpeed(), 1.0);
+		double highSpeedReduction = 1.0 - 0.55 * speedFraction;
+		double steeringBoost = 1.08 + 0.20 * (1.0 - speedFraction);
 		double direction = Math.signum(forwardSpeed);
-		float yawChange = (float) (steeringInput * direction * this.vehicleSpec.maxSteeringPerTick() * speedRatio * highSpeedReduction * grip);
+
+		float yawChange = (float) (
+				steeringInput
+						* direction
+						* this.vehicleSpec.maxSteeringPerTick()
+						* speedRatio
+						* highSpeedReduction
+						* steeringBoost
+						* grip
+		);
 		this.setYaw(this.getYaw() + yawChange);
 	}
 
