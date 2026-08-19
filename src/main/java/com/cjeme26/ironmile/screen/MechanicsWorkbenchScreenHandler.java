@@ -161,12 +161,12 @@ public final class MechanicsWorkbenchScreenHandler extends ScreenHandler {
 			}
 		}
 
-		// Assembly: Body + Transmission + Tire Set.
-		this.addSlot(new AssemblySlot(this.assemblyGrid, 0, 23, 58, AssemblyKind.BODY));
-		this.addSlot(new AssemblySlot(this.assemblyGrid, 1, 65, 58, AssemblyKind.TRANSMISSION));
-		this.addSlot(new AssemblySlot(this.assemblyGrid, 2, 107, 58, AssemblyKind.TIRES));
+		// Assembly: use a sideways-triangle layout to take advantage of vertical space.
+		this.addSlot(new AssemblySlot(this.assemblyGrid, 0, 35, 48, AssemblyKind.BODY));
+		this.addSlot(new AssemblySlot(this.assemblyGrid, 1, 35, 82, AssemblyKind.TRANSMISSION));
+		this.addSlot(new AssemblySlot(this.assemblyGrid, 2, 91, 65, AssemblyKind.TIRES));
 
-		this.addSlot(new Slot(this.resultInventory, 0, 148, 58) {
+		this.addSlot(new Slot(this.resultInventory, 0, 148, 65) {
 			@Override
 			public boolean canInsert(ItemStack stack) {
 				return false;

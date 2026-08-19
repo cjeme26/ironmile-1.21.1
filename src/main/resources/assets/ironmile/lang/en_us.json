@@ -29,7 +29,7 @@
   "container.ironmile.hatchback_trunk": "Hatchback Trunk",
   "container.ironmile.fuel": "Fuel Tank",
   "gui.ironmile.fuel_input": "Fuel",
-  "gui.ironmile.prototype_fuel": "Coal / Charcoal  •  5.0 L each",
+  "gui.ironmile.prototype_fuel": "Coal / Charcoal  \u2022  5.0 L each",
   "gui.ironmile.tank": "Tank",
   "block.ironmile.mechanics_workbench": "Mechanic's Workbench",
   "item.ironmile.mechanics_workbench": "Mechanic's Workbench",
@@ -73,8 +73,9 @@
   "recipe.ironmile.yellow_hatchback_assembly": "Yellow Hatchback",
   "recipe.ironmile.yellow_hatchback_assembly.detail": "Body + your choice of transmission + Tire Set.",
   "gui.ironmile.workbench.transmission_short": "Trans.",
-  "gui.ironmile.workbench.missing_materials": "You do not have the materials needed to craft this item.",
+  "gui.ironmile.workbench.missing_materials": "Missing materials",
   "gui.ironmile.workbench.have_need": "Have: %s / Need: %s",
   "gui.ironmile.workbench.any_transmission": "Any Transmission",
-  "gui.ironmile.workbench.any_tire_set": "Any Tire Set"
+  "gui.ironmile.workbench.any_tire_set": "Any Tire Set",
+  "gui.ironmile.workbench.required": "Required"
 }

@@ -92,24 +92,38 @@ public final class MechanicsWorkbenchScreen extends HandledScreen<MechanicsWorkb
 				}
 			}
 		} else {
-			drawVanillaSlot(context, left + 23, top + 58);
-			drawVanillaSlot(context, left + 65, top + 58);
-			drawVanillaSlot(context, left + 107, top + 58);
+			drawVanillaSlot(context, left + 35, top + 48);
+			drawVanillaSlot(context, left + 35, top + 82);
+			drawVanillaSlot(context, left + 91, top + 65);
 		}
 
-		// Shared output slot and the actual vanilla crafting-table arrow pixels.
-		drawVanillaSlot(context, left + 148, top + 58);
-		context.drawTexture(
-				CRAFTING_TABLE_TEXTURE,
-				left + 123,
-				top + 59,
-				90.0F,
-				35.0F,
-				22,
-				15,
-				256,
-				256
-		);
+		if (page == Page.ASSEMBLY) {
+			drawVanillaSlot(context, left + 148, top + 65);
+			context.drawTexture(
+					CRAFTING_TABLE_TEXTURE,
+					left + 119,
+					top + 66,
+					90.0F,
+					35.0F,
+					22,
+					15,
+					256,
+					256
+			);
+		} else {
+			drawVanillaSlot(context, left + 148, top + 58);
+			context.drawTexture(
+					CRAFTING_TABLE_TEXTURE,
+					left + 123,
+					top + 59,
+					90.0F,
+					35.0F,
+					22,
+					15,
+					256,
+					256
+			);
+		}
 
 		for (int row = 0; row < 3; row++) {
 			for (int column = 0; column < 9; column++) {
@@ -140,9 +154,9 @@ public final class MechanicsWorkbenchScreen extends HandledScreen<MechanicsWorkb
 		this.drawTab(context, 112, 21, 61, "gui.ironmile.workbench.assembly", Page.ASSEMBLY);
 
 		if (this.handler.getPage() == Page.ASSEMBLY) {
-			this.drawCenteredSlotLabel(context, 23, 43, "gui.ironmile.workbench.body_slot");
-			this.drawCenteredSlotLabel(context, 65, 43, "gui.ironmile.workbench.transmission_short");
-			this.drawCenteredSlotLabel(context, 107, 43, "gui.ironmile.workbench.tires_slot");
+			this.drawCenteredSlotLabel(context, 35, 38, "gui.ironmile.workbench.body_slot");
+			this.drawCenteredSlotLabel(context, 35, 72, "gui.ironmile.workbench.transmission_short");
+			this.drawCenteredSlotLabel(context, 91, 55, "gui.ironmile.workbench.tires_slot");
 		}
 
 		context.drawText(
@@ -158,7 +172,15 @@ public final class MechanicsWorkbenchScreen extends HandledScreen<MechanicsWorkb
 		if (selected != null && selected.page() == this.handler.getPage()) {
 			int detailY = RECIPE_Y + 102;
 			context.drawTextWrapped(this.textRenderer, selected.name(), RECIPE_X + 7, detailY, 84, TEXT);
-			this.drawRequirements(context, selected.id(), detailY + 22);
+			context.drawText(
+					this.textRenderer,
+					Text.translatable("gui.ironmile.workbench.required"),
+					RECIPE_X + 7,
+					detailY + 20,
+					TEXT,
+					false
+			);
+			this.drawRequirements(context, selected.id(), detailY + 32);
 		}
 	}
 
@@ -247,7 +269,9 @@ public final class MechanicsWorkbenchScreen extends HandledScreen<MechanicsWorkb
 			if (requirement.required() > 1) {
 				String count = Integer.toString(requirement.required());
 				int countX = x + 18 - this.textRenderer.getWidth(count);
-				context.drawText(this.textRenderer, count, countX, y + 11, 0xFFFFFFFF, true);
+				int countY = y + 11;
+				context.fill(countX - 1, countY - 1, x + 19, y + 19, 0xA0000000);
+				context.drawText(this.textRenderer, count, countX, countY, 0xFFFFFFFF, true);
 			}
 		}
 	}
@@ -310,7 +334,7 @@ public final class MechanicsWorkbenchScreen extends HandledScreen<MechanicsWorkb
 
 		int detailY = this.y + RECIPE_Y + 102;
 		int startX = this.x + RECIPE_X + 7;
-		int startY = detailY + 22;
+		int startY = detailY + 32;
 		List<RecipeRequirement> requirements = MechanicsWorkbenchScreenHandler.getRecipeRequirements(recipeId);
 		for (int index = 0; index < requirements.size(); index++) {
 			int column = index % 4;
