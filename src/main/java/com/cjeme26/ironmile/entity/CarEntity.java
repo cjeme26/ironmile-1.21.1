@@ -1121,12 +1121,15 @@ public class CarEntity extends BoatEntity implements Inventory {
 			// Manual selector order: R (-1), N (0), 1, 2, 3, 4, 5, 6.
 			this.reverseEngaged = this.currentGear == -1;
 
-			if (this.pressingBack) {
-				speed = this.moveTowardZero(speed, this.getBrakeForce(speed, grip));
-			} else if (this.currentGear == 0) {
-				// Neutral disconnects the engine from the wheels.
-				speed *= this.vehicleSpec.rollingResistance();
-			} else if (this.currentGear == -1) {
+			/*
+			 * Route input by selected gear FIRST.
+			 *
+			 * The previous version checked pressingBack before checking whether
+			 * Reverse was selected. Because S is pressingBack, S was always
+			 * interpreted as a brake before the Reverse branch could ever run.
+			 */
+			if (this.currentGear == -1) {
+				// Reverse: S = throttle, W = brake.
 				if (this.pressingForward) {
 					speed = this.moveTowardZero(speed, this.getBrakeForce(speed, grip));
 				} else if (this.pressingBack && !shifting) {
@@ -1149,8 +1152,18 @@ public class CarEntity extends BoatEntity implements Inventory {
 									* this.getClutchTorqueScale()
 					);
 				}
+			} else if (this.currentGear == 0) {
+				// Neutral disconnects the engine from the wheels.
+				if (this.pressingBack) {
+					speed = this.moveTowardZero(speed, this.getBrakeForce(speed, grip));
+				} else {
+					speed *= this.vehicleSpec.rollingResistance();
+				}
 			} else {
-				if (this.pressingForward && !shifting) {
+				// Forward gears: W = throttle, S = brake.
+				if (this.pressingBack) {
+					speed = this.moveTowardZero(speed, this.getBrakeForce(speed, grip));
+				} else if (this.pressingForward && !shifting) {
 					if (speed < -0.03) {
 						speed = Math.min(0.0, speed + this.getBrakeForce(speed, grip));
 					} else {
