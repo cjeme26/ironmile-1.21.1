@@ -1,1 +1,0 @@
-Manual selector: R -> N -> 1 -> 2 -> 3 -> 4 -> 5 -> 6\nR shifts up; F shifts down. Neutral disconnects engine torque. Automatic behavior is unchanged.\n
