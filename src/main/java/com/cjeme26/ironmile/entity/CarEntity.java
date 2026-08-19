@@ -171,8 +171,22 @@ public class CarEntity extends BoatEntity implements Inventory {
 	private static final double EXIT_BRAKE_MIN_FORCE = 0.035;
 	private static final double EXIT_BRAKE_SPEED_FRACTION = 0.22;
 	private static final int REMOTE_POSITION_INTERPOLATION_STEPS = 2;
-	private static final double CLIENT_PREDICTION_HARD_CORRECTION_DISTANCE_SQUARED = 16.0;
-	private static final float CLIENT_PREDICTION_HARD_CORRECTION_YAW_DEGREES = 75.0F;
+
+	/*
+	 * Local-driver reconciliation.
+	 *
+	 * The old fixed 4-block hard correction could occasionally be crossed at road
+	 * speed and made the rendered car pop left/right for a frame. The tolerance now
+	 * widens modestly with horizontal speed, and a routine disagreement must persist
+	 * for two server snapshots before we touch the local transform.
+	 */
+	private static final double CLIENT_PREDICTION_BASE_TOLERANCE = 3.75;
+	private static final double CLIENT_PREDICTION_MAX_SPEED_BONUS = 4.0;
+	private static final double CLIENT_PREDICTION_EMERGENCY_DISTANCE_SQUARED = 144.0;
+	private static final float CLIENT_PREDICTION_YAW_TOLERANCE_DEGREES = 85.0F;
+	private static final float CLIENT_PREDICTION_EMERGENCY_YAW_DEGREES = 150.0F;
+	private static final int CLIENT_PREDICTION_CORRECTION_CONFIRMATIONS = 2;
+	private static final double CLIENT_PREDICTION_SOFT_CORRECTION_FACTOR = 0.20;
 	/*
 	 * Keep simulating locally for a few ticks after the driver leaves. This lets the
 	 * authoritative server transition into the same no-input/exit-braking state
@@ -244,6 +258,7 @@ public class CarEntity extends BoatEntity implements Inventory {
 	 */
 	private boolean clientPredictionActive;
 	private int clientPredictionHandoffTicks;
+	private int clientPredictionCorrectionConfirmations;
 	private boolean clientHasAuthoritativeTransform;
 	private double clientAuthoritativeX;
 	private double clientAuthoritativeY;
@@ -322,46 +337,40 @@ public class CarEntity extends BoatEntity implements Inventory {
 
 	private Vec3d findSafeDismountPosition(LivingEntity passenger, Vec3d candidate) {
 		/*
-		 * Try the exact candidate first, then one block higher in case the car is
-		 * next to a slab/step. We reject locations whose full standing box
-		 * intersects blocks or the car's own collision cells.
+		 * Alpha 2 rule: a normal car exit stays at ground level.
+		 *
+		 * The previous pass also tried candidate.y + 1.0 when a door position was
+		 * blocked. Around the car's collision cells that could be accepted as "safe"
+		 * and place the player on the hood/roof. Do not vertically hop over the car.
 		 */
-		for (double yOffset : new double[] {0.0, 1.0}) {
-			double x = candidate.x;
-			double y = candidate.y + yOffset;
-			double z = candidate.z;
+		double x = candidate.x;
+		double y = candidate.y;
+		double z = candidate.z;
 
-			Box standingBox = passenger.getDimensions(passenger.getPose())
-					.getBoxAt(x, y, z)
-					.contract(0.02);
+		Box standingBox = passenger.getDimensions(passenger.getPose())
+				.getBoxAt(x, y, z)
+				.contract(0.02);
 
-			if (!this.getWorld().isSpaceEmpty(passenger, standingBox)) {
-				continue;
-			}
+		if (!this.getWorld().isSpaceEmpty(passenger, standingBox)) {
+			return null;
+		}
 
-			if (standingBox.intersects(this.getBoundingBox())) {
-				continue;
-			}
+		if (standingBox.intersects(this.getBoundingBox())) {
+			return null;
+		}
 
-			boolean intersectsCarBody = false;
-			for (CarCollisionEntity body : this.getWorld()
-					.getEntitiesByClass(
-							CarCollisionEntity.class,
-							standingBox.expand(0.02),
-							body -> body.belongsTo(this)
-					)) {
-				if (standingBox.intersects(body.getBoundingBox())) {
-					intersectsCarBody = true;
-					break;
-				}
-			}
-
-			if (!intersectsCarBody) {
-				return new Vec3d(x, y, z);
+		for (CarCollisionEntity body : this.getWorld()
+				.getEntitiesByClass(
+						CarCollisionEntity.class,
+						standingBox.expand(0.02),
+						body -> body.belongsTo(this)
+				)) {
+			if (standingBox.intersects(body.getBoundingBox())) {
+				return null;
 			}
 		}
 
-		return null;
+		return new Vec3d(x, y, z);
 	}
 
 
@@ -681,13 +690,73 @@ public class CarEntity extends BoatEntity implements Inventory {
 		this.clientAuthoritativePitch = pitch;
 
 		if (this.clientPredictionActive) {
-			double positionErrorSquared = this.squaredDistanceTo(x, y, z);
+			double xError = x - this.getX();
+			double yError = y - this.getY();
+			double zError = z - this.getZ();
+			double positionErrorSquared = xError * xError + yError * yError + zError * zError;
 			float yawError = Math.abs(MathHelper.wrapDegrees(yaw - this.getYaw()));
-			if (positionErrorSquared > CLIENT_PREDICTION_HARD_CORRECTION_DISTANCE_SQUARED
-					|| yawError > CLIENT_PREDICTION_HARD_CORRECTION_YAW_DEGREES) {
+
+			double horizontalSpeed = Math.sqrt(
+					this.getVelocity().x * this.getVelocity().x
+							+ this.getVelocity().z * this.getVelocity().z
+			);
+			double speedBonus = Math.min(
+					CLIENT_PREDICTION_MAX_SPEED_BONUS,
+					horizontalSpeed * 4.0
+			);
+			double tolerance = CLIENT_PREDICTION_BASE_TOLERANCE + speedBonus;
+			double toleranceSquared = tolerance * tolerance;
+
+			boolean emergencyCorrection =
+					positionErrorSquared > CLIENT_PREDICTION_EMERGENCY_DISTANCE_SQUARED
+							|| yawError > CLIENT_PREDICTION_EMERGENCY_YAW_DEGREES;
+
+			boolean outsideRoutineTolerance =
+					positionErrorSquared > toleranceSquared
+							|| yawError > CLIENT_PREDICTION_YAW_TOLERANCE_DEGREES;
+
+			if (emergencyCorrection) {
+				/*
+				 * A genuine teleport/major desync still obeys the server immediately.
+				 * This is intentionally far beyond ordinary road-speed packet drift.
+				 */
+				this.clientPredictionCorrectionConfirmations = 0;
 				this.setPosition(x, y, z);
 				this.setRotation(yaw, pitch);
+				return;
 			}
+
+			if (!outsideRoutineTolerance) {
+				this.clientPredictionCorrectionConfirmations = 0;
+				return;
+			}
+
+			this.clientPredictionCorrectionConfirmations++;
+			if (this.clientPredictionCorrectionConfirmations
+					< CLIENT_PREDICTION_CORRECTION_CONFIRMATIONS) {
+				return;
+			}
+
+			this.clientPredictionCorrectionConfirmations = 0;
+
+			/*
+			 * Do not one-frame snap routine prediction error. Nudge only a fraction
+			 * toward the authoritative transform. The local simulation continues on
+			 * the next tick, while repeated server snapshots can gently pull a real
+			 * divergence back into line.
+			 */
+			this.setPosition(
+					this.getX() + xError * CLIENT_PREDICTION_SOFT_CORRECTION_FACTOR,
+					this.getY() + yError * CLIENT_PREDICTION_SOFT_CORRECTION_FACTOR,
+					this.getZ() + zError * CLIENT_PREDICTION_SOFT_CORRECTION_FACTOR
+			);
+
+			float yawDelta = MathHelper.wrapDegrees(yaw - this.getYaw());
+			this.setRotation(
+					this.getYaw() + yawDelta * (float) CLIENT_PREDICTION_SOFT_CORRECTION_FACTOR,
+					this.getPitch() + (pitch - this.getPitch())
+							* (float) CLIENT_PREDICTION_SOFT_CORRECTION_FACTOR
+			);
 			return;
 		}
 
@@ -860,6 +929,7 @@ public class CarEntity extends BoatEntity implements Inventory {
 	private void beginClientPrediction() {
 		this.clientPredictionActive = true;
 		this.clientPredictionHandoffTicks = 0;
+		this.clientPredictionCorrectionConfirmations = 0;
 
 		/* Seed private drivetrain fields from the latest authoritative tracker data. */
 		this.currentGear = this.dataTracker.get(SYNCED_GEAR);
@@ -876,6 +946,7 @@ public class CarEntity extends BoatEntity implements Inventory {
 	private void endClientPrediction() {
 		this.clientPredictionActive = false;
 		this.clientPredictionHandoffTicks = 0;
+		this.clientPredictionCorrectionConfirmations = 0;
 		this.clearInputs();
 
 		/*
