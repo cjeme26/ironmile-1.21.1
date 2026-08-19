@@ -193,6 +193,19 @@ public class CarEntity extends BoatEntity implements Inventory {
 	private static final double BUMPER_FORWARD_OFFSET = 1.82;
 	private static final double BUMPER_SIDE_OFFSET = 0.72;
 	private static final double BUMPER_SENSOR_RADIUS = 0.10;
+	private static final double DISMOUNT_SIDE_DISTANCE = 1.18;
+	private static final double DISMOUNT_REAR_DISTANCE = 1.55;
+	private static final double DISMOUNT_FRONT_DISTANCE = 1.55;
+	private static final double DISMOUNT_VERTICAL_LIFT = 0.05;
+	/*
+	 * The visible CC0 shell is approximated by a rotated grid of small AABBs.
+	 * Small cells greatly reduce the invisible square corners produced by one
+	 * large Minecraft entity box when the car is viewed/driven diagonally.
+	 */
+	private static final float COLLISION_SIDE_OFFSET = 0.38F;
+	private static final float[] CABIN_COLLISION_FORWARD = {-0.30F, 0.30F};
+	private static final float[] HOOD_COLLISION_FORWARD = {0.88F, 1.38F};
+	private static final float[] REAR_COLLISION_FORWARD = {-0.88F, -1.38F};
 	private static final double DRIVER_SEAT_SIDE_OFFSET = 0.32;
 	private static final double DRIVER_SEAT_FORWARD_OFFSET = 0.18;
 	private static final double DRIVER_SEAT_HEIGHT = 0.20;
@@ -219,6 +232,9 @@ public class CarEntity extends BoatEntity implements Inventory {
 	/** 1 = front bumper held against an obstacle, -1 = rear, 0 = clear. */
 	private int bumperContactDirection;
 	private HeadlightMarkerEntity headlightMarker;
+	private final CarCollisionEntity[] cabinCollisionBodies = new CarCollisionEntity[4];
+	private final CarCollisionEntity[] hoodCollisionBodies = new CarCollisionEntity[4];
+	private final CarCollisionEntity[] rearCollisionBodies = new CarCollisionEntity[4];
 
 	/*
 	 * The server always remains authoritative, but the local driver's client also
@@ -248,38 +264,106 @@ public class CarEntity extends BoatEntity implements Inventory {
 	}
 
 	/** Places the driver inside the compact hatchback cabin rather than on a boat bench. */
-	@Override
-	protected Vec3d getPassengerAttachmentPos(Entity passenger, EntityDimensions dimensions, float scaleFactor) {
-		return new Vec3d(DRIVER_SEAT_SIDE_OFFSET, DRIVER_SEAT_HEIGHT, DRIVER_SEAT_FORWARD_OFFSET);
-	}
 
-	/**
-	 * Prefer the two doors when leaving the car. Looking toward the bonnet or
-	 * hatch must not place the player inside the long visual body.
-	 */
 	@Override
 	public Vec3d updatePassengerForDismount(LivingEntity passenger) {
+		/*
+		 * Deliberate exit priority:
+		 *   1) driver's side
+		 *   2) passenger side
+		 *   3) behind the car
+		 *   4) in front of the car
+		 *
+		 * We validate the player's full standing collision box at each candidate
+		 * before accepting it. The player's look direction is left untouched.
+		 */
 		float yawRadians = this.getYaw() * MathHelper.RADIANS_PER_DEGREE;
-		Vec3d forward = new Vec3d(-MathHelper.sin(yawRadians), 0.0, MathHelper.cos(yawRadians));
-		Vec3d driverSide = new Vec3d(forward.z, 0.0, -forward.x);
-		Vec3d[] sideChoices = {driverSide, driverSide.multiply(-1.0)};
+		Vec3d forward = new Vec3d(
+				-MathHelper.sin(yawRadians),
+				0.0,
+				MathHelper.cos(yawRadians)
+		);
+		Vec3d right = new Vec3d(forward.z, 0.0, -forward.x);
 
-		for (Vec3d side : sideChoices) {
-			Vec3d candidate = new Vec3d(
-					this.getX() + side.x * DISMOUNT_SIDE_OFFSET + forward.x * DISMOUNT_FORWARD_OFFSET,
-					this.getBoundingBox().minY + 0.05,
-					this.getZ() + side.z * DISMOUNT_SIDE_OFFSET + forward.z * DISMOUNT_FORWARD_OFFSET
-			);
-			if (this.getWorld().isSpaceEmpty(
-					passenger,
-					passenger.getDimensions(EntityPose.STANDING).getBoxAt(candidate)
-			)) {
-				return candidate;
+		double baseY = this.getBoundingBox().minY + DISMOUNT_VERTICAL_LIFT;
+
+		Vec3d[] candidates = new Vec3d[] {
+				new Vec3d(
+						this.getX() - right.x * DISMOUNT_SIDE_DISTANCE,
+						baseY,
+						this.getZ() - right.z * DISMOUNT_SIDE_DISTANCE
+				),
+				new Vec3d(
+						this.getX() + right.x * DISMOUNT_SIDE_DISTANCE,
+						baseY,
+						this.getZ() + right.z * DISMOUNT_SIDE_DISTANCE
+				),
+				new Vec3d(
+						this.getX() - forward.x * DISMOUNT_REAR_DISTANCE,
+						baseY,
+						this.getZ() - forward.z * DISMOUNT_REAR_DISTANCE
+				),
+				new Vec3d(
+						this.getX() + forward.x * DISMOUNT_FRONT_DISTANCE,
+						baseY,
+						this.getZ() + forward.z * DISMOUNT_FRONT_DISTANCE
+				)
+		};
+
+		for (Vec3d candidate : candidates) {
+			Vec3d safe = this.findSafeDismountPosition(passenger, candidate);
+			if (safe != null) {
+				return safe;
 			}
 		}
 
 		return super.updatePassengerForDismount(passenger);
 	}
+
+	private Vec3d findSafeDismountPosition(LivingEntity passenger, Vec3d candidate) {
+		/*
+		 * Try the exact candidate first, then one block higher in case the car is
+		 * next to a slab/step. We reject locations whose full standing box
+		 * intersects blocks or the car's own collision cells.
+		 */
+		for (double yOffset : new double[] {0.0, 1.0}) {
+			double x = candidate.x;
+			double y = candidate.y + yOffset;
+			double z = candidate.z;
+
+			Box standingBox = passenger.getDimensions(passenger.getPose())
+					.getBoxAt(x, y, z)
+					.contract(0.02);
+
+			if (!this.getWorld().isSpaceEmpty(passenger, standingBox)) {
+				continue;
+			}
+
+			if (standingBox.intersects(this.getBoundingBox())) {
+				continue;
+			}
+
+			boolean intersectsCarBody = false;
+			for (CarCollisionEntity body : this.getWorld()
+					.getEntitiesByClass(
+							CarCollisionEntity.class,
+							standingBox.expand(0.02),
+							body -> body.belongsTo(this)
+					)) {
+				if (standingBox.intersects(body.getBoundingBox())) {
+					intersectsCarBody = true;
+					break;
+				}
+			}
+
+			if (!intersectsCarBody) {
+				return new Vec3d(x, y, z);
+			}
+		}
+
+		return null;
+	}
+
 
 	@Override
 	protected void initDataTracker(DataTracker.Builder builder) {
@@ -701,7 +785,70 @@ public class CarEntity extends BoatEntity implements Inventory {
 		this.updateHeadlightMarker((ServerWorld) this.getWorld());
 		this.baseTick();
 		this.tickRoadMovement();
+		this.updateCollisionBodies((ServerWorld) this.getWorld());
 		this.syncAuthoritativeState();
+	}
+
+	private void updateCollisionBodies(ServerWorld world) {
+		this.updateCollisionGrid(
+				world,
+				this.cabinCollisionBodies,
+				ModEntities.CAR_CABIN_COLLISION,
+				CABIN_COLLISION_FORWARD
+		);
+		this.updateCollisionGrid(
+				world,
+				this.hoodCollisionBodies,
+				ModEntities.CAR_HOOD_COLLISION,
+				HOOD_COLLISION_FORWARD
+		);
+		this.updateCollisionGrid(
+				world,
+				this.rearCollisionBodies,
+				ModEntities.CAR_REAR_COLLISION,
+				REAR_COLLISION_FORWARD
+		);
+	}
+
+	private void updateCollisionGrid(
+			ServerWorld world,
+			CarCollisionEntity[] bodies,
+			EntityType<CarCollisionEntity> type,
+			float[] forwardOffsets
+	) {
+		int index = 0;
+		for (float forwardOffset : forwardOffsets) {
+			for (float sideOffset : new float[] {-COLLISION_SIDE_OFFSET, COLLISION_SIDE_OFFSET}) {
+				CarCollisionEntity body = bodies[index];
+				if (body == null || body.isRemoved()) {
+					body = new CarCollisionEntity(type, world);
+					bodies[index] = body;
+					body.attachTo(this, forwardOffset, sideOffset);
+					world.spawnEntity(body);
+				} else {
+					body.attachTo(this, forwardOffset, sideOffset);
+				}
+				index++;
+			}
+		}
+	}
+
+	@Override
+	public boolean collidesWith(Entity other) {
+		if (other instanceof CarCollisionEntity collisionBody
+				&& collisionBody.belongsTo(this)) {
+			return false;
+		}
+		return super.collidesWith(other);
+	}
+
+	@Override
+	public void pushAwayFrom(Entity other) {
+		if (other instanceof CarCollisionEntity collisionBody
+				&& collisionBody.belongsTo(this)) {
+			return;
+		}
+		super.pushAwayFrom(other);
 	}
 
 	private boolean isLocallyControlledClient() {

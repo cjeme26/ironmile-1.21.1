@@ -64,6 +64,9 @@ public class IronMileClient implements ClientModInitializer {
 				"key.ironmile.exit_vehicle", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_X, "key.category.ironmile"));
 		EntityRendererRegistry.register(ModEntities.CAR, CarEntityRenderer::new);
 		EntityRendererRegistry.register(ModEntities.HEADLIGHT_MARKER, EmptyEntityRenderer::new);
+		EntityRendererRegistry.register(ModEntities.CAR_CABIN_COLLISION, EmptyEntityRenderer::new);
+		EntityRendererRegistry.register(ModEntities.CAR_HOOD_COLLISION, EmptyEntityRenderer::new);
+		EntityRendererRegistry.register(ModEntities.CAR_REAR_COLLISION, EmptyEntityRenderer::new);
 		HandledScreens.register(ModScreenHandlers.FUEL, FuelScreen::new);
 		ClientTickEvents.END_CLIENT_TICK.register(EngineSoundManager::tick);
 
