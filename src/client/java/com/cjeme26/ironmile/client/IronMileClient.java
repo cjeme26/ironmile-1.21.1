@@ -8,6 +8,8 @@ import com.cjeme26.ironmile.network.HeadlightTogglePayload;
 import com.cjeme26.ironmile.network.CarInputPayload;
 import com.cjeme26.ironmile.network.GearSelectPayload;
 import com.cjeme26.ironmile.network.GearShiftPayload;
+import com.cjeme26.ironmile.network.IgnitionTogglePayload;
+import com.cjeme26.ironmile.network.ExitVehiclePayload;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
@@ -28,8 +30,11 @@ public class IronMileClient implements ClientModInitializer {
 	private static KeyBinding toggleHeadlightsKey;
 	private static KeyBinding shiftUpKey;
 	private static KeyBinding shiftDownKey;
+	private static KeyBinding clutchKey;
+	private static KeyBinding exitVehicleKey;
 	private static int lastControlledCarId = -1;
 	private static boolean mouseShifterActive = false;
+	private static boolean jumpWasDownForIgnition = false;
 	private static double shifterX = 0.0;
 	private static double shifterY = 0.0;
 	private static boolean reverseLockoutLatched = false;
@@ -50,9 +55,66 @@ public class IronMileClient implements ClientModInitializer {
 				"key.ironmile.shift_up", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_R, "key.category.ironmile"));
 		shiftDownKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
 				"key.ironmile.shift_down", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F, "key.category.ironmile"));
+		clutchKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+				"key.ironmile.clutch", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_LEFT_SHIFT, "key.category.ironmile"));
+		exitVehicleKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+				"key.ironmile.exit_vehicle", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_X, "key.category.ironmile"));
 		EntityRendererRegistry.register(ModEntities.CAR, CarEntityRenderer::new);
 		EntityRendererRegistry.register(ModEntities.HEADLIGHT_MARKER, EmptyEntityRenderer::new);
 		ClientTickEvents.END_CLIENT_TICK.register(EngineSoundManager::tick);
+
+		ClientTickEvents.START_CLIENT_TICK.register(client -> {
+			boolean drivingCar = client.currentScreen == null
+					&& client.player != null
+					&& client.player.getVehicle() instanceof CarEntity car
+					&& car.getControllingPassenger() == client.player;
+
+			if (!drivingCar) {
+				while (exitVehicleKey.wasPressed()) {}
+				jumpWasDownForIgnition = false;
+				return;
+			}
+
+			CarEntity car = (CarEntity) client.player.getVehicle();
+
+			while (exitVehicleKey.wasPressed()) {
+				int carId = car.getId();
+				client.player.stopRiding();
+				ClientPlayNetworking.send(new ExitVehiclePayload(carId));
+				return;
+			}
+
+			if (car.isManualTransmission()) {
+				/*
+				 * Left Shift is the clutch while driving a manual car.
+				 * Vanilla Sneak/dismount is consumed; X exits the vehicle.
+				 */
+				client.options.sneakKey.setPressed(false);
+				while (client.options.sneakKey.wasPressed()) {}
+			}
+
+			/*
+			 * Space reuses Minecraft's actual Jump key. Inside the driver seat it
+			 * becomes a single, easy-to-remember ignition control; outside the car
+			 * it immediately returns to normal jumping.
+			 */
+			boolean jumpDown = client.options.jumpKey.isPressed();
+			if (jumpDown && !jumpWasDownForIgnition) {
+				car.toggleIgnition();
+				ClientPlayNetworking.send(new IgnitionTogglePayload(car.getId()));
+				client.player.playSound(
+						SoundEvents.BLOCK_LEVER_CLICK,
+						0.45F,
+						car.isEngineStarting() ? 0.92F : 0.62F
+				);
+			}
+			jumpWasDownForIgnition = jumpDown;
+
+			// Do not allow Minecraft's normal jump/mount action while driving.
+			client.options.jumpKey.setPressed(false);
+			while (client.options.jumpKey.wasPressed()) {}
+		});
+
 		ClientTickEvents.START_CLIENT_TICK.register(client -> {
 			if (client.player == null) {
 				lastControlledCarId = -1;
@@ -65,13 +127,15 @@ public class IronMileClient implements ClientModInitializer {
 				if (client.options.rightKey.isPressed()) inputMask |= CarInputPayload.RIGHT;
 				if (client.options.forwardKey.isPressed()) inputMask |= CarInputPayload.FORWARD;
 				if (client.options.backKey.isPressed()) inputMask |= CarInputPayload.BACK;
+				if (car.isManualTransmission() && clutchKey.isPressed()) inputMask |= CarInputPayload.CLUTCH;
 
 				/* Apply input before the client world tick for immediate local prediction. */
 				car.setInputs(
 						(inputMask & CarInputPayload.LEFT) != 0,
 						(inputMask & CarInputPayload.RIGHT) != 0,
 						(inputMask & CarInputPayload.FORWARD) != 0,
-						(inputMask & CarInputPayload.BACK) != 0
+						(inputMask & CarInputPayload.BACK) != 0,
+						(inputMask & CarInputPayload.CLUTCH) != 0
 				);
 				lastControlledCarId = car.getId();
 				ClientPlayNetworking.send(new CarInputPayload(car.getId(), inputMask));
@@ -127,17 +191,29 @@ public class IronMileClient implements ClientModInitializer {
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
 			if (client.player != null
 					&& client.player.getVehicle() instanceof CarEntity car
-					&& car.isManualTransmission()
 					&& car.getControllingPassenger() == client.player) {
 
-				// Permanent fallback controls while the mouse shifter is tested.
 				while (shiftUpKey.wasPressed()) {
-					car.manualShift(1);
-					ClientPlayNetworking.send(new GearShiftPayload(car.getId(), 1));
+					if (car.isManualTransmission()) {
+						// Permanent fallback for the mouse H-pattern.
+						car.manualShift(1);
+						ClientPlayNetworking.send(new GearShiftPayload(car.getId(), 1));
+					} else if (car.automaticSelectorStep(-1)) {
+						// R: R -> D -> P
+						ClientPlayNetworking.send(new GearShiftPayload(car.getId(), 1));
+						client.player.playSound(SoundEvents.BLOCK_LEVER_CLICK, 0.45F, 0.88F);
+					}
 				}
+
 				while (shiftDownKey.wasPressed()) {
-					car.manualShift(-1);
-					ClientPlayNetworking.send(new GearShiftPayload(car.getId(), -1));
+					if (car.isManualTransmission()) {
+						car.manualShift(-1);
+						ClientPlayNetworking.send(new GearShiftPayload(car.getId(), -1));
+					} else if (car.automaticSelectorStep(1)) {
+						// F: P -> D -> R
+						ClientPlayNetworking.send(new GearShiftPayload(car.getId(), -1));
+						client.player.playSound(SoundEvents.BLOCK_LEVER_CLICK, 0.45F, 1.05F);
+					}
 				}
 
 			} else {
@@ -161,7 +237,7 @@ public class IronMileClient implements ClientModInitializer {
 			String speed = String.format(Locale.ROOT, "%.0f km/h", Math.abs(car.getHorizontalSpeedKmh()));
 			String status = car.isManualTransmission()
 					? speed
-					: speed + "     " + car.getSelectedGearDisplay();
+					: speed + "     " + automaticSelectorHud(car.getAutomaticSelectorDisplay());
 
 			float scale = 1.35F;
 			drawContext.getMatrices().push();
@@ -171,11 +247,43 @@ public class IronMileClient implements ClientModInitializer {
 			drawContext.drawTextWithShadow(client.textRenderer, Text.literal(status), x, 8, 0xFFFFFF);
 			drawContext.getMatrices().pop();
 
+			String vehicleState = "";
+			if (car.isEngineStarting()) {
+				vehicleState = "STARTING...";
+			} else if (car.isEngineStalled()) {
+				vehicleState = "STALLED";
+			} else if (!car.isEngineRunning()) {
+				vehicleState = "ENGINE OFF";
+			}
+			if (!vehicleState.isEmpty()) {
+				int stateX = (client.getWindow().getScaledWidth()
+						- client.textRenderer.getWidth(vehicleState)) / 2;
+				int stateColor = 0xFFDDDDDD;
+				drawContext.drawTextWithShadow(
+						client.textRenderer,
+						Text.literal(vehicleState),
+						stateX,
+						26,
+						stateColor
+				);
+			}
+
 			if (car.isManualTransmission()) {
 				drawManualGearStick(drawContext, client, car.getSelectedGearDisplay());
 
 			}
 		});
+	}
+
+	private static String automaticSelectorHud(String selected) {
+		StringBuilder hud = new StringBuilder();
+		for (String option : new String[] {"P", "D", "R"}) {
+			if (!hud.isEmpty()) {
+				hud.append(" ");
+			}
+			hud.append(option.equals(selected) ? "[" + option + "]" : option);
+		}
+		return hud.toString();
 	}
 
 	private static void drawManualGearStick(net.minecraft.client.gui.DrawContext drawContext,

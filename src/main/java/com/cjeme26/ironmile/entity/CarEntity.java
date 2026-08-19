@@ -14,6 +14,8 @@ import net.minecraft.entity.data.TrackedData;
 import net.minecraft.entity.data.TrackedDataHandlerRegistry;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.vehicle.BoatEntity;
+import net.minecraft.inventory.Inventories;
+import net.minecraft.inventory.Inventory;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.text.Text;
@@ -24,9 +26,13 @@ import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.util.collection.DefaultedList;
 import net.minecraft.util.shape.VoxelShape;
 import net.minecraft.world.World;
 import net.minecraft.server.world.ServerWorld;
+import net.minecraft.screen.GenericContainerScreenHandler;
+import net.minecraft.screen.ScreenHandlerType;
+import net.minecraft.screen.SimpleNamedScreenHandlerFactory;
 
 /**
  * Iron Mile road vehicle with road-focused movement and drivetrain simulation.
@@ -35,7 +41,7 @@ import net.minecraft.server.world.ServerWorld;
  * keyboard-input plumbing, but Iron Mile now calculates authoritative movement
  * on the server. These constants are deliberately easy to tune after tests.</p>
  */
-public class CarEntity extends BoatEntity {
+public class CarEntity extends BoatEntity implements Inventory {
 	private static final TrackedData<Integer> TIRE_TYPE = DataTracker.registerData(
 			CarEntity.class,
 			TrackedDataHandlerRegistry.INTEGER
@@ -43,6 +49,22 @@ public class CarEntity extends BoatEntity {
 	private static final TrackedData<Boolean> HEADLIGHTS_ON = DataTracker.registerData(
 			CarEntity.class,
 			TrackedDataHandlerRegistry.BOOLEAN
+	);
+	private static final TrackedData<Boolean> ENGINE_ON = DataTracker.registerData(
+			CarEntity.class,
+			TrackedDataHandlerRegistry.BOOLEAN
+	);
+	private static final TrackedData<Integer> ENGINE_START_TICKS = DataTracker.registerData(
+			CarEntity.class,
+			TrackedDataHandlerRegistry.INTEGER
+	);
+	private static final TrackedData<Boolean> HANDBRAKE_ON = DataTracker.registerData(
+			CarEntity.class,
+			TrackedDataHandlerRegistry.BOOLEAN
+	);
+	private static final TrackedData<Integer> AUTOMATIC_SELECTOR = DataTracker.registerData(
+			CarEntity.class,
+			TrackedDataHandlerRegistry.INTEGER
 	);
 	private static final TrackedData<String> VEHICLE_SPEC_ID = DataTracker.registerData(
 			CarEntity.class,
@@ -94,13 +116,34 @@ public class CarEntity extends BoatEntity {
 	);
 	private static final String TIRE_NBT_KEY = "IronMileTireType";
 	private static final String HEADLIGHTS_NBT_KEY = "IronMileHeadlightsOn";
+	private static final String ENGINE_ON_NBT_KEY = "IronMileEngineOn";
+	private static final String HANDBRAKE_NBT_KEY = "IronMileHandbrakeOn";
+	private static final String AUTOMATIC_SELECTOR_NBT_KEY = "IronMileAutomaticSelector";
 	private static final String VEHICLE_SPEC_NBT_KEY = "IronMileVehicleSpec";
 	private static final String MANUAL_GEAR_NBT_KEY = "IronMileManualGear";
+	private static final String TRUNK_NBT_KEY = "IronMileTrunk";
+	private static final int TRUNK_SIZE = 9;
+	private static final int AUTO_PARK = 0;
+	private static final int AUTO_REVERSE = 1;
+	/* Legacy saved value from the earlier PRND prototype; no longer selectable. */
+	private static final int AUTO_NEUTRAL = 2;
+	private static final int AUTO_DRIVE = 3;
+	private static final double AUTO_SELECTOR_LOCKOUT_KMH = 4.0;
 
 	// Vehicle-specific driving values live in VehicleSpec so additional cars can
 	// share this entity logic without duplicating the drivetrain simulation.
 	private VehicleSpec vehicleSpec = VehicleSpec.HATCHBACK_AUTOMATIC;
+	private final DefaultedList<ItemStack> trunkInventory = DefaultedList.ofSize(TRUNK_SIZE, ItemStack.EMPTY);
 
+	private static final int ENGINE_START_DURATION_TICKS = 14;
+	private static final double HANDBRAKE_MIN_FORCE = 0.018;
+	private static final double HANDBRAKE_SPEED_FRACTION = 0.16;
+	private static final double HANDBRAKE_STOP_SPEED = 1.5 / 72.0;
+	private static final double AUTO_PARKING_HOLD_SPEED = 2.0 / 72.0;
+	private static final double CLUTCH_RELEASE_PER_TICK = 0.075;
+	private static final double CLUTCH_FULLY_COUPLED = 0.90;
+	private static final double STALL_SPEED = 2.0 / 72.0;
+	private static final int STALL_GRACE_TICKS = 6;
 	private static final double GRAVITY = 0.04;
 	private static final double GROUNDING_FORCE = 0.08;
 	private static final float STEP_HEIGHT = 0.6F;
@@ -150,6 +193,10 @@ public class CarEntity extends BoatEntity {
 	private double engineRpm = this.vehicleSpec.idleRpm();
 	private double lastForwardSpeed;
 	private boolean exitBrakingActive;
+	private boolean clutchPressed;
+	private double clutchEngagement = 1.0;
+	private int stallCandidateTicks;
+	private boolean engineStalled;
 	private boolean reverseEngaged;
 	/** 1 = front bumper held against an obstacle, -1 = rear, 0 = clear. */
 	private int bumperContactDirection;
@@ -221,6 +268,10 @@ public class CarEntity extends BoatEntity {
 		super.initDataTracker(builder);
 		builder.add(TIRE_TYPE, TireType.ALL_SEASON.ordinal());
 		builder.add(HEADLIGHTS_ON, false);
+		builder.add(ENGINE_ON, false);
+		builder.add(ENGINE_START_TICKS, 0);
+		builder.add(HANDBRAKE_ON, true);
+		builder.add(AUTOMATIC_SELECTOR, AUTO_PARK);
 		builder.add(VEHICLE_SPEC_ID, VehicleSpec.HATCHBACK_AUTOMATIC.id());
 		builder.add(SYNCED_GEAR, 1);
 		builder.add(SYNCED_ENGINE_RPM, (int) VehicleSpec.HATCHBACK_AUTOMATIC.idleRpm());
@@ -240,8 +291,15 @@ public class CarEntity extends BoatEntity {
 		super.writeCustomDataToNbt(nbt);
 		nbt.putInt(TIRE_NBT_KEY, this.getTireType().ordinal());
 		nbt.putBoolean(HEADLIGHTS_NBT_KEY, this.areHeadlightsOn());
+		nbt.putBoolean(ENGINE_ON_NBT_KEY, this.isEngineRunning());
+		nbt.putBoolean(HANDBRAKE_NBT_KEY, this.isHandbrakeOn());
+		nbt.putInt(AUTOMATIC_SELECTOR_NBT_KEY, this.dataTracker.get(AUTOMATIC_SELECTOR));
 		nbt.putString(VEHICLE_SPEC_NBT_KEY, this.getVehicleSpec().id());
 		if (this.isManualTransmission()) nbt.putInt(MANUAL_GEAR_NBT_KEY, this.currentGear);
+
+		NbtCompound trunkNbt = new NbtCompound();
+		Inventories.writeNbt(trunkNbt, this.trunkInventory, this.getRegistryManager());
+		nbt.put(TRUNK_NBT_KEY, trunkNbt);
 	}
 
 	@Override
@@ -253,12 +311,33 @@ public class CarEntity extends BoatEntity {
 		if (nbt.contains(HEADLIGHTS_NBT_KEY)) {
 			this.setHeadlightsOn(nbt.getBoolean(HEADLIGHTS_NBT_KEY));
 		}
+		if (nbt.contains(ENGINE_ON_NBT_KEY)) {
+			this.setEngineRunning(nbt.getBoolean(ENGINE_ON_NBT_KEY));
+		}
+		if (nbt.contains(HANDBRAKE_NBT_KEY)) {
+			this.setHandbrakeOn(nbt.getBoolean(HANDBRAKE_NBT_KEY));
+		}
 		if (nbt.contains(VEHICLE_SPEC_NBT_KEY)) {
 			this.setVehicleSpec(VehicleSpec.fromId(nbt.getString(VEHICLE_SPEC_NBT_KEY)));
+		}
+		if (this.isAutomaticTransmission() && nbt.contains(AUTOMATIC_SELECTOR_NBT_KEY)) {
+			int savedSelector = nbt.getInt(AUTOMATIC_SELECTOR_NBT_KEY);
+			if (savedSelector == AUTO_NEUTRAL) {
+				savedSelector = AUTO_PARK;
+			}
+			this.setAutomaticSelector(savedSelector, true);
 		}
 		if (this.isManualTransmission() && nbt.contains(MANUAL_GEAR_NBT_KEY)) {
 			this.currentGear = MathHelper.clamp(nbt.getInt(MANUAL_GEAR_NBT_KEY), -1, this.vehicleSpec.gearCount());
 			this.reverseEngaged = this.currentGear == -1;
+		}
+		if (nbt.contains(TRUNK_NBT_KEY)) {
+			this.trunkInventory.clear();
+			Inventories.readNbt(
+					nbt.getCompound(TRUNK_NBT_KEY),
+					this.trunkInventory,
+					this.getRegistryManager()
+			);
 		}
 	}
 
@@ -272,19 +351,123 @@ public class CarEntity extends BoatEntity {
 			}
 			return ActionResult.success(this.getWorld().isClient);
 		}
+
+		/*
+		 * The CC0 model has no animated hatch yet, so storage is intentionally
+		 * abstract for now. Sneak + right-click beside the car opens its trunk;
+		 * plain right-click keeps the existing enter/drive interaction.
+		 */
+		if (player.isSneaking() && player.getVehicle() != this) {
+			if (!this.getWorld().isClient) {
+				player.openHandledScreen(new SimpleNamedScreenHandlerFactory(
+						(syncId, playerInventory, openingPlayer) ->
+								new GenericContainerScreenHandler(
+										ScreenHandlerType.GENERIC_9X1,
+										syncId,
+										playerInventory,
+										this,
+										1
+								),
+						Text.translatable("container.ironmile.hatchback_trunk")
+				));
+			}
+			return ActionResult.success(this.getWorld().isClient);
+		}
+
 		return super.interact(player, hand);
 	}
 
 	@Override
+	public int size() {
+		return TRUNK_SIZE;
+	}
+
+	@Override
+	public boolean isEmpty() {
+		for (ItemStack stack : this.trunkInventory) {
+			if (!stack.isEmpty()) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	@Override
+	public ItemStack getStack(int slot) {
+		if (slot < 0 || slot >= this.trunkInventory.size()) {
+			return ItemStack.EMPTY;
+		}
+		return this.trunkInventory.get(slot);
+	}
+
+	@Override
+	public ItemStack removeStack(int slot, int amount) {
+		ItemStack removed = Inventories.splitStack(this.trunkInventory, slot, amount);
+		if (!removed.isEmpty()) {
+			this.markDirty();
+		}
+		return removed;
+	}
+
+	@Override
+	public ItemStack removeStack(int slot) {
+		ItemStack removed = Inventories.removeStack(this.trunkInventory, slot);
+		if (!removed.isEmpty()) {
+			this.markDirty();
+		}
+		return removed;
+	}
+
+	@Override
+	public void setStack(int slot, ItemStack stack) {
+		if (slot < 0 || slot >= this.trunkInventory.size()) {
+			return;
+		}
+		this.trunkInventory.set(slot, stack);
+		stack.capCount(this.getMaxCount(stack));
+		this.markDirty();
+	}
+
+	@Override
+	public void markDirty() {
+		/*
+		 * Entities are serialized from their live fields when their chunk saves,
+		 * so there is no block-entity dirty flag to set here.
+		 */
+	}
+
+	@Override
+	public boolean canPlayerUse(PlayerEntity player) {
+		return !this.isRemoved() && player.squaredDistanceTo(this) <= 64.0;
+	}
+
+	@Override
+	public void clear() {
+		this.trunkInventory.clear();
+		this.markDirty();
+	}
+
+	@Override
 	public void setInputs(boolean pressingLeft, boolean pressingRight, boolean pressingForward, boolean pressingBack) {
+		this.setInputs(pressingLeft, pressingRight, pressingForward, pressingBack, false);
+	}
+
+	public void setInputs(
+			boolean pressingLeft,
+			boolean pressingRight,
+			boolean pressingForward,
+			boolean pressingBack,
+			boolean clutchPressed
+	) {
 		this.pressingLeft = pressingLeft;
 		this.pressingRight = pressingRight;
 		this.pressingForward = pressingForward;
 		this.pressingBack = pressingBack;
+		this.clutchPressed = this.isManualTransmission() && clutchPressed;
 	}
 
 	private void clearInputs() {
-		this.setInputs(false, false, false, false);
+		this.setInputs(false, false, false, false, false);
 	}
 
 	@Override
@@ -293,18 +476,11 @@ public class CarEntity extends BoatEntity {
 		this.clearInputs();
 
 		/*
-		 * Treat leaving the driver's seat like applying a parking brake. At walking
-		 * speed the car stops immediately; faster exits preserve a short, speed-scaled
-		 * roll instead of coasting for several seconds.
+		 * There is no player-facing handbrake control anymore. Leaving a car
+		 * starts the existing exit-brake handoff and the invisible parking hold
+		 * takes over once the car is nearly stopped.
 		 */
-		double horizontalSpeed = this.getVelocity().horizontalLength();
-		if (horizontalSpeed <= EXIT_INSTANT_STOP_SPEED) {
-			this.setVelocity(0.0, this.getVelocity().y, 0.0);
-			this.lastForwardSpeed = 0.0;
-			this.exitBrakingActive = false;
-		} else {
-			this.exitBrakingActive = true;
-		}
+		this.exitBrakingActive = true;
 	}
 
 	/** Prevents the inherited boat networking from enabling paddle animation/sounds. */
@@ -382,8 +558,16 @@ public class CarEntity extends BoatEntity {
 	public void tick() {
 		this.vehicleSpec = VehicleSpec.fromId(this.dataTracker.get(VEHICLE_SPEC_ID));
 
+		if (!this.getWorld().isClient || this.isLocallyControlledClient()) {
+			this.tickIgnitionState();
+		}
+
 		if (!this.hasControllingPassenger()) {
 			this.clearInputs();
+		}
+
+		if (!this.getWorld().isClient || this.isLocallyControlledClient()) {
+			this.tickClutchState();
 		}
 
 		if (this.getWorld().isClient) {
@@ -521,7 +705,7 @@ public class CarEntity extends BoatEntity {
 		this.dataTracker.set(SYNCED_ROAD_CONDITION, this.currentRoadConditionName);
 		this.dataTracker.set(SYNCED_STEERING, this.calculateVisualSteeringInput());
 		this.dataTracker.set(SYNCED_BRAKING, this.calculateBrakeInputActive());
-		this.dataTracker.set(SYNCED_THROTTLE, this.pressingForward || this.pressingBack);
+		this.dataTracker.set(SYNCED_THROTTLE, this.isThrottleInputPressed());
 	}
 
 	private void updateHeadlightMarker(ServerWorld world) {
@@ -559,6 +743,7 @@ public class CarEntity extends BoatEntity {
 
 		if (this.isOnGround()) {
 			this.sampleWheelGrip(forward, right);
+			this.updateAutomaticParkingHold(forwardSpeed);
 		}
 
 		if (this.hasControllingPassenger() && this.isOnGround()) {
@@ -577,6 +762,12 @@ public class CarEntity extends BoatEntity {
 			// Low-grip surfaces retain more sideways velocity and therefore slide.
 			sidewaysSpeed *= this.getLateralVelocityRetained();
 		} else if (this.isOnGround()) {
+			if (this.isEngineRunning()) {
+				this.engineRpm += (this.vehicleSpec.idleRpm() - this.engineRpm) * 0.25;
+			} else {
+				this.engineRpm = 0.0;
+			}
+
 			/*
 			 * The exit brake must run in the unoccupied branch. The previous
 			 * implementation set this flag during dismount, but only consumed it
@@ -588,6 +779,24 @@ public class CarEntity extends BoatEntity {
 				forwardSpeed *= this.vehicleSpec.rollingResistance();
 			}
 			sidewaysSpeed *= this.getLateralVelocityRetained();
+		}
+
+		/*
+		 * Release the invisible parking hold before it suppresses movement.
+		 * This fixes manual reverse: in R, S is the throttle and must be able
+		 * to pull away just as W does in a forward gear.
+		 */
+		if (this.isOnGround()
+				&& this.isHandbrakeOn()
+				&& this.hasControllingPassenger()
+				&& this.isEngineRunning()
+				&& this.isThrottleInputPressed()) {
+			this.setHandbrakeOn(false);
+		}
+
+		if (this.isOnGround() && this.isHandbrakeOn()) {
+			forwardSpeed = this.applyHandbrake(forwardSpeed);
+			sidewaysSpeed *= 0.35;
 		}
 
 		if (Math.abs(forwardSpeed) < STOP_EPSILON && !this.pressingForward && !this.pressingBack) {
@@ -641,13 +850,53 @@ public class CarEntity extends BoatEntity {
 	}
 
 	private boolean isThrottleHeldAgainstBumper(double forwardSpeed) {
-		if (this.bumperContactDirection > 0) {
-			return this.pressingForward && !this.pressingBack && forwardSpeed >= -0.03;
+		int driveDirection = this.getSelectedDriveDirection();
+		if (!this.isThrottleInputPressed() || this.isBrakeInputPressed() || driveDirection == 0) {
+			return false;
 		}
-		if (this.bumperContactDirection < 0) {
-			return this.pressingBack && !this.pressingForward && forwardSpeed <= 0.03;
+
+		if (this.bumperContactDirection > 0 && driveDirection > 0) {
+			return forwardSpeed >= -0.03;
+		}
+		if (this.bumperContactDirection < 0 && driveDirection < 0) {
+			return forwardSpeed <= 0.03;
 		}
 		return false;
+	}
+
+	private int getSelectedDriveDirection() {
+		if (this.isManualTransmission()) {
+			if (this.currentGear < 0) return -1;
+			if (this.currentGear > 0) return 1;
+			return 0;
+		}
+
+		int selector = this.getAutomaticSelector();
+		if (selector == AUTO_REVERSE) return -1;
+		if (selector == AUTO_DRIVE) return 1;
+		return 0;
+	}
+
+	private boolean isThrottleInputPressed() {
+		int direction = this.getSelectedDriveDirection();
+		if (direction < 0) {
+			return this.pressingBack;
+		}
+		if (direction > 0) {
+			return this.pressingForward;
+		}
+		return false;
+	}
+
+	private boolean isBrakeInputPressed() {
+		int direction = this.getSelectedDriveDirection();
+		if (direction < 0) {
+			return this.pressingForward;
+		}
+		if (direction > 0) {
+			return this.pressingBack;
+		}
+		return this.pressingBack;
 	}
 
 	private double holdAtBumperContact() {
@@ -841,7 +1090,27 @@ public class CarEntity extends BoatEntity {
 	}
 
 	private double applyThrottleAndBrakes(double speed, double grip) {
-		if (this.isAutomaticTransmission()) {
+		/*
+		 * W is always accelerator and S is always brake. Direction comes from
+		 * the transmission selector, not from which movement key is pressed.
+		 */
+		if (!this.isEngineRunning()) {
+			if (this.isAutomaticTransmission() && this.getAutomaticSelector() == AUTO_PARK) {
+				speed = 0.0;
+			} else if (this.pressingBack) {
+				speed = this.moveTowardZero(speed, this.getBrakeForce(speed, grip));
+			} else {
+				speed *= this.vehicleSpec.rollingResistance();
+			}
+
+			double drag = this.vehicleSpec.aerodynamicDrag() * speed * speed;
+			speed = this.moveTowardZero(speed, drag);
+			this.lastForwardSpeed = speed;
+			this.engineRpm = 0.0;
+			return speed;
+		}
+
+		if (this.isAutomaticTransmission() && this.getAutomaticSelector() == AUTO_DRIVE) {
 			this.updateAutomaticTransmission(speed);
 		} else if (this.shiftTicksRemaining > 0) {
 			this.shiftTicksRemaining--;
@@ -851,64 +1120,421 @@ public class CarEntity extends BoatEntity {
 		if (this.isManualTransmission()) {
 			// Manual selector order: R (-1), N (0), 1, 2, 3, 4, 5, 6.
 			this.reverseEngaged = this.currentGear == -1;
-			if (this.currentGear == 0) {
+
+			if (this.pressingBack) {
+				speed = this.moveTowardZero(speed, this.getBrakeForce(speed, grip));
+			} else if (this.currentGear == 0) {
 				// Neutral disconnects the engine from the wheels.
-				if (speed > 0.03 && this.pressingBack) speed = Math.max(0.0, speed - this.getBrakeForce(speed, grip));
-				else if (speed < -0.03 && this.pressingForward) speed = Math.min(0.0, speed + this.getBrakeForce(speed, grip));
-				else speed *= this.vehicleSpec.rollingResistance();
+				speed *= this.vehicleSpec.rollingResistance();
 			} else if (this.currentGear == -1) {
-				if (speed > 0.03 && this.pressingBack) speed = Math.max(0.0, speed - this.getBrakeForce(speed, grip));
-				else if (this.pressingBack && !this.pressingForward && !shifting) speed -= this.getDrivetrainAcceleration(speed, grip, true);
-				else if (speed < -0.03 && this.pressingForward) speed = Math.min(0.0, speed + this.getBrakeForce(speed, grip));
-				else {
+				if (this.pressingForward) {
+					speed = this.moveTowardZero(speed, this.getBrakeForce(speed, grip));
+				} else if (this.pressingBack && !shifting) {
+					if (speed > 0.03) {
+						speed = Math.max(0.0, speed - this.getBrakeForce(speed, grip));
+					} else {
+						double clutchScale = this.getClutchTorqueScale();
+						if (clutchScale > 0.001) {
+							speed -= this.getDrivetrainAcceleration(speed, grip, true) * clutchScale;
+						} else {
+							speed *= this.vehicleSpec.rollingResistance();
+						}
+					}
+				} else {
 					speed *= this.vehicleSpec.rollingResistance();
-					speed = this.moveTowardZero(speed, this.vehicleSpec.lowSpeedCoastBrake() * this.vehicleSpec.reverseCoastBrakeMultiplier());
+					speed = this.moveTowardZero(
+							speed,
+							this.vehicleSpec.lowSpeedCoastBrake()
+									* this.vehicleSpec.reverseCoastBrakeMultiplier()
+									* this.getClutchTorqueScale()
+					);
 				}
 			} else {
-				if (speed < -0.03 && this.pressingForward) speed = Math.min(0.0, speed + this.getBrakeForce(speed, grip));
-				else if (this.pressingForward && !this.pressingBack && !shifting) {
-					double acceleration = this.getDrivetrainAcceleration(speed, grip, false);
-					acceleration *= this.getManualHighGearLaunchScale(speed);
-					acceleration *= this.getManualLimiterTorqueScale();
-					speed += acceleration;
-				}
-				else if (speed > 0.03 && this.pressingBack) speed = Math.max(0.0, speed - this.getBrakeForce(speed, grip));
-				else {
+				if (this.pressingForward && !shifting) {
+					if (speed < -0.03) {
+						speed = Math.min(0.0, speed + this.getBrakeForce(speed, grip));
+					} else {
+						double clutchScale = this.getClutchTorqueScale();
+						double acceleration = this.getDrivetrainAcceleration(speed, grip, false);
+						acceleration *= this.getManualHighGearLaunchScale(speed);
+						acceleration *= this.getManualLimiterTorqueScale();
+						acceleration *= clutchScale;
+						speed += acceleration;
+
+						if (clutchScale < 0.05) {
+							speed *= this.vehicleSpec.rollingResistance();
+						}
+					}
+				} else {
 					speed *= this.vehicleSpec.rollingResistance();
-					speed = this.moveTowardZero(speed, this.getManualEngineBrakeForce(speed));
+					speed = this.moveTowardZero(
+							speed,
+							this.getManualEngineBrakeForce(speed) * this.getClutchTorqueScale()
+					);
 				}
 			}
 		} else {
-			// Existing automatic behavior.
-			if (this.pressingForward && !this.pressingBack) {
-				if (speed < -0.03) { speed = Math.min(0.0, speed + this.getBrakeForce(speed, grip)); this.reverseEngaged = speed < 0.0; }
-				else if (!shifting) { this.reverseEngaged = false; speed += this.getDrivetrainAcceleration(speed, grip, false); }
-			} else if (this.pressingBack && !this.pressingForward) {
-				if (speed > 0.03) { speed = Math.max(0.0, speed - this.getBrakeForce(speed, grip)); this.reverseEngaged = false; }
-				else if (!shifting) { this.reverseEngaged = true; speed -= this.getDrivetrainAcceleration(speed, grip, true); }
-			} else {
-				speed *= this.vehicleSpec.rollingResistance();
-				double ratio = this.reverseEngaged ? this.vehicleSpec.reverseRatio() : this.vehicleSpec.gearRatio(this.currentGear);
-				speed = this.moveTowardZero(speed, this.vehicleSpec.engineBrakeForce() * (ratio / this.vehicleSpec.gearRatio(1)));
-				double lowSpeedFactor = 1.0 - Math.min(Math.abs(speed) / this.vehicleSpec.lowSpeedCoastThreshold(), 1.0);
-				double coastBrake = this.vehicleSpec.lowSpeedCoastBrake() * lowSpeedFactor;
-				if (this.reverseEngaged) coastBrake *= this.vehicleSpec.reverseCoastBrakeMultiplier();
-				speed = this.moveTowardZero(speed, coastBrake);
+			int selector = this.getAutomaticSelector();
+			this.reverseEngaged = selector == AUTO_REVERSE;
+
+			switch (selector) {
+				case AUTO_PARK -> {
+					speed = 0.0;
+					this.currentGear = 1;
+				}
+				case AUTO_REVERSE -> {
+					this.currentGear = 1;
+					if (this.pressingForward) {
+						speed = this.moveTowardZero(speed, this.getBrakeForce(speed, grip));
+					} else if (this.pressingBack && !shifting) {
+						if (speed > 0.03) {
+							speed = Math.max(0.0, speed - this.getBrakeForce(speed, grip));
+						} else {
+							speed -= this.getDrivetrainAcceleration(speed, grip, true);
+						}
+					} else {
+						speed *= this.vehicleSpec.rollingResistance();
+						speed = this.moveTowardZero(
+								speed,
+								this.vehicleSpec.lowSpeedCoastBrake()
+										* this.vehicleSpec.reverseCoastBrakeMultiplier()
+						);
+					}
+				}
+				default -> {
+					// Drive: automatic gearbox chooses 1..N, W supplies throttle.
+					if (this.pressingBack) {
+						speed = this.moveTowardZero(speed, this.getBrakeForce(speed, grip));
+					} else if (this.pressingForward && !shifting) {
+						if (speed < -0.03) {
+							speed = Math.min(0.0, speed + this.getBrakeForce(speed, grip));
+						} else {
+							speed += this.getDrivetrainAcceleration(speed, grip, false);
+						}
+					} else {
+						speed *= this.vehicleSpec.rollingResistance();
+						double ratio = this.vehicleSpec.gearRatio(this.currentGear);
+						speed = this.moveTowardZero(
+								speed,
+								this.vehicleSpec.engineBrakeForce()
+										* (ratio / this.vehicleSpec.gearRatio(1))
+						);
+						double lowSpeedFactor = 1.0
+								- Math.min(Math.abs(speed) / this.vehicleSpec.lowSpeedCoastThreshold(), 1.0);
+						speed = this.moveTowardZero(
+								speed,
+								this.vehicleSpec.lowSpeedCoastBrake() * lowSpeedFactor
+						);
+					}
+				}
 			}
 		}
 
-		if (Math.abs(speed) < this.vehicleSpec.automaticStopSpeed() && !this.pressingForward && !this.pressingBack) {
+		if (Math.abs(speed) < this.vehicleSpec.automaticStopSpeed()
+				&& !this.pressingForward
+				&& !this.pressingBack) {
 			speed = 0.0;
 			this.exitBrakingActive = false;
 		}
-		if (shifting) speed *= 0.998;
+
+		if (shifting) {
+			speed *= 0.998;
+		}
+
 		double drag = this.vehicleSpec.aerodynamicDrag() * speed * speed;
 		speed = this.moveTowardZero(speed, drag);
-		speed = MathHelper.clamp(speed, -this.vehicleSpec.maxReverseSpeed(), this.vehicleSpec.maxForwardSpeed());
+		speed = MathHelper.clamp(
+				speed,
+				-this.vehicleSpec.maxReverseSpeed(),
+				this.vehicleSpec.maxForwardSpeed()
+		);
+
 		this.lastForwardSpeed = speed;
 		this.updateEngineRpm(speed, shifting);
+		this.checkForManualStall(speed, shifting);
 		return speed;
 	}
+
+	private void tickIgnitionState() {
+		int startTicks = this.dataTracker.get(ENGINE_START_TICKS);
+		if (startTicks <= 0) {
+			if (!this.isEngineRunning()) {
+				this.engineRpm = 0.0;
+			}
+			return;
+		}
+
+		startTicks--;
+		this.dataTracker.set(ENGINE_START_TICKS, startTicks);
+		this.engineRpm = 0.0;
+
+		if (startTicks == 0) {
+			this.dataTracker.set(ENGINE_ON, true);
+			this.engineStalled = false;
+			this.engineRpm = this.vehicleSpec.idleRpm();
+		}
+	}
+
+	public boolean isEngineRunning() {
+		return this.dataTracker.get(ENGINE_ON);
+	}
+
+	public boolean isEngineStarting() {
+		return this.dataTracker.get(ENGINE_START_TICKS) > 0;
+	}
+
+	public int getEngineStartTicks() {
+		return this.dataTracker.get(ENGINE_START_TICKS);
+	}
+
+	public void setEngineRunning(boolean running) {
+		this.dataTracker.set(ENGINE_ON, running);
+		this.dataTracker.set(ENGINE_START_TICKS, 0);
+		this.engineStalled = false;
+		this.stallCandidateTicks = 0;
+		this.engineRpm = running ? Math.max(this.vehicleSpec.idleRpm(), this.engineRpm) : 0.0;
+
+		if (!running && Math.abs(this.lastForwardSpeed) <= AUTO_PARKING_HOLD_SPEED) {
+			this.setHandbrakeOn(true);
+		}
+	}
+
+	public void toggleIgnition() {
+		if (this.isEngineRunning() || this.isEngineStarting()) {
+			this.setEngineRunning(false);
+			return;
+		}
+
+		this.dataTracker.set(ENGINE_ON, false);
+		this.dataTracker.set(ENGINE_START_TICKS, ENGINE_START_DURATION_TICKS);
+		this.engineStalled = false;
+		this.stallCandidateTicks = 0;
+		this.engineRpm = 0.0;
+	}
+
+	private void tickClutchState() {
+		if (!this.isManualTransmission()) {
+			this.clutchPressed = false;
+			this.clutchEngagement = 1.0;
+			this.stallCandidateTicks = 0;
+			return;
+		}
+
+		if (this.clutchPressed) {
+			this.clutchEngagement = 0.0;
+			this.stallCandidateTicks = 0;
+			return;
+		}
+
+		/*
+		 * Assisted keyboard release: reconnect over about 0.65 seconds instead
+		 * of snapping directly from fully disengaged to fully engaged.
+		 */
+		this.clutchEngagement = Math.min(
+				1.0,
+				this.clutchEngagement + CLUTCH_RELEASE_PER_TICK
+		);
+	}
+
+	private double getClutchTorqueScale() {
+		if (!this.isManualTransmission()) {
+			return 1.0;
+		}
+
+		// Broad forgiving bite point with smooth torque transfer.
+		double t = MathHelper.clamp((this.clutchEngagement - 0.10) / 0.80, 0.0, 1.0);
+		return t * t * (3.0 - 2.0 * t);
+	}
+
+	private void checkForManualStall(double speed, boolean shifting) {
+		if (!this.isManualTransmission()
+				|| !this.isEngineRunning()
+				|| this.currentGear == 0
+				|| this.clutchPressed
+				|| this.clutchEngagement < CLUTCH_FULLY_COUPLED
+				|| shifting) {
+			this.stallCandidateTicks = 0;
+			return;
+		}
+
+		boolean matchingThrottle = this.currentGear < 0
+				? this.pressingBack
+				: this.pressingForward;
+
+		if (Math.abs(speed) > STALL_SPEED || matchingThrottle) {
+			this.stallCandidateTicks = 0;
+			return;
+		}
+
+		this.stallCandidateTicks++;
+		if (this.stallCandidateTicks >= STALL_GRACE_TICKS) {
+			this.stallEngine();
+		}
+	}
+
+	private void stallEngine() {
+		this.dataTracker.set(ENGINE_ON, false);
+		this.dataTracker.set(ENGINE_START_TICKS, 0);
+		this.engineRpm = 0.0;
+		this.engineStalled = true;
+		this.stallCandidateTicks = 0;
+
+		if (Math.abs(this.lastForwardSpeed) <= AUTO_PARKING_HOLD_SPEED) {
+			this.setHandbrakeOn(true);
+		}
+	}
+
+	public boolean isClutchPressed() {
+		return this.isManualTransmission() && this.clutchPressed;
+	}
+
+	public double getClutchEngagement() {
+		return this.isManualTransmission() ? this.clutchEngagement : 1.0;
+	}
+
+	public boolean isEngineStalled() {
+		return this.engineStalled && !this.isEngineRunning() && !this.isEngineStarting();
+	}
+
+	private void updateAutomaticParkingHold(double forwardSpeed) {
+		if (!this.hasControllingPassenger()) {
+			/*
+			 * If somebody jumps out while moving, the existing exit brake slows the
+			 * vehicle first. Once it is down to a parking speed, hold it there.
+			 */
+			if (Math.abs(forwardSpeed) <= EXIT_INSTANT_STOP_SPEED) {
+				this.setHandbrakeOn(true);
+			}
+			return;
+		}
+
+		if (this.isAutomaticTransmission() && this.getAutomaticSelector() == AUTO_PARK) {
+			this.setHandbrakeOn(true);
+			return;
+		}
+
+		if (!this.isEngineRunning()) {
+			if (Math.abs(forwardSpeed) <= AUTO_PARKING_HOLD_SPEED) {
+				this.setHandbrakeOn(true);
+			}
+			return;
+		}
+
+		/*
+		 * No extra parking-brake button to remember. Starting to drive releases
+		 * the invisible hold. Reverse uses S, so either direction's throttle can
+		 * release the hold.
+		 */
+		if (this.isThrottleInputPressed()) {
+			this.setHandbrakeOn(false);
+		}
+	}
+
+	private boolean isHandbrakeOn() {
+		return this.dataTracker.get(HANDBRAKE_ON);
+	}
+
+	private void setHandbrakeOn(boolean enabled) {
+		this.dataTracker.set(HANDBRAKE_ON, enabled);
+	}
+
+	private double applyHandbrake(double speed) {
+		if (Math.abs(speed) <= HANDBRAKE_STOP_SPEED) {
+			this.lastForwardSpeed = 0.0;
+			return 0.0;
+		}
+
+		double force = Math.max(
+				HANDBRAKE_MIN_FORCE,
+				Math.abs(speed) * HANDBRAKE_SPEED_FRACTION
+		);
+		return this.moveTowardZero(speed, force);
+	}
+
+	private int getAutomaticSelector() {
+		int selector = this.dataTracker.get(AUTOMATIC_SELECTOR);
+		if (selector == AUTO_NEUTRAL) {
+			return AUTO_PARK;
+		}
+		if (selector == AUTO_REVERSE || selector == AUTO_DRIVE) {
+			return selector;
+		}
+		return AUTO_PARK;
+	}
+
+	private void setAutomaticSelector(int selector, boolean force) {
+		int target = selector;
+		if (target == AUTO_NEUTRAL) {
+			target = AUTO_PARK;
+		}
+		if (target != AUTO_PARK && target != AUTO_DRIVE && target != AUTO_REVERSE) {
+			target = AUTO_PARK;
+		}
+
+		if (!force
+				&& (target == AUTO_PARK || target == AUTO_REVERSE)
+				&& this.getHorizontalSpeedKmh() > AUTO_SELECTOR_LOCKOUT_KMH) {
+			return;
+		}
+
+		this.dataTracker.set(AUTOMATIC_SELECTOR, target);
+		this.reverseEngaged = target == AUTO_REVERSE;
+
+		if (target != AUTO_DRIVE) {
+			this.currentGear = 1;
+			this.shiftTicksRemaining = 0;
+		}
+
+		if (target == AUTO_PARK) {
+			this.setHandbrakeOn(true);
+		}
+	}
+
+	public boolean automaticSelectorStep(int direction) {
+		if (!this.isAutomaticTransmission() || direction == 0) {
+			return false;
+		}
+
+		int current = this.getAutomaticSelector();
+		int target;
+
+		if (direction > 0) {
+			// F: P -> D -> R
+			target = switch (current) {
+				case AUTO_PARK -> AUTO_DRIVE;
+				case AUTO_DRIVE -> AUTO_REVERSE;
+				default -> AUTO_REVERSE;
+			};
+		} else {
+			// R: R -> D -> P
+			target = switch (current) {
+				case AUTO_REVERSE -> AUTO_DRIVE;
+				case AUTO_DRIVE -> AUTO_PARK;
+				default -> AUTO_PARK;
+			};
+		}
+
+		if (target == current) {
+			return false;
+		}
+		if ((target == AUTO_PARK || target == AUTO_REVERSE)
+				&& this.getHorizontalSpeedKmh() > AUTO_SELECTOR_LOCKOUT_KMH) {
+			return false;
+		}
+
+		this.setAutomaticSelector(target, false);
+		return this.getAutomaticSelector() == target;
+	}
+
+	public String getAutomaticSelectorDisplay() {
+		return switch (this.getAutomaticSelector()) {
+			case AUTO_PARK -> "P";
+			case AUTO_REVERSE -> "R";
+			case AUTO_NEUTRAL -> "N";
+			default -> "D";
+		};
+	}
+
 
 	/**
 	 * Applies a strong speed-proportional parking brake after the driver exits.
@@ -939,13 +1565,14 @@ public class CarEntity extends BoatEntity {
 	}
 
 	private void updateAutomaticTransmission(double speed) {
-		if (this.shiftTicksRemaining > 0) {
-			this.shiftTicksRemaining--;
+		if (!this.isAutomaticTransmission() || this.getAutomaticSelector() != AUTO_DRIVE) {
+			this.currentGear = 1;
+			this.shiftTicksRemaining = 0;
 			return;
 		}
 
-		if (speed < -0.03 || this.reverseEngaged) {
-			this.currentGear = 1;
+		if (this.shiftTicksRemaining > 0) {
+			this.shiftTicksRemaining--;
 			return;
 		}
 
@@ -1099,16 +1726,61 @@ public class CarEntity extends BoatEntity {
 	}
 
 	private void updateEngineRpm(double speed, boolean shifting) {
-		double targetRpm;
-		if (this.isManualTransmission() && this.currentGear == 0) {
-			boolean revving = this.pressingForward || this.pressingBack;
-			targetRpm = revving ? Math.min(this.vehicleSpec.revLimiterRpm(), 3200.0) : this.vehicleSpec.idleRpm();
-		} else {
-			double ratio = (this.isManualTransmission() && this.currentGear == -1) || this.reverseEngaged
-					? this.vehicleSpec.reverseRatio() : this.vehicleSpec.gearRatio(Math.max(1, this.currentGear));
-			targetRpm = shifting ? Math.max(this.vehicleSpec.idleRpm(), this.engineRpm * 0.86)
-					: Math.min(this.vehicleSpec.revLimiterRpm(), this.calculateCoupledRpm(speed, ratio));
+		if (!this.isEngineRunning()) {
+			this.engineRpm = 0.0;
+			return;
 		}
+
+		double targetRpm;
+
+		if (this.isManualTransmission()) {
+			boolean throttleInput = this.currentGear < 0
+					? this.pressingBack
+					: this.pressingForward;
+
+			if (this.currentGear == 0) {
+				targetRpm = throttleInput
+						? Math.min(this.vehicleSpec.revLimiterRpm(), 3600.0)
+						: this.vehicleSpec.idleRpm();
+			} else {
+				double ratio = this.currentGear < 0
+						? this.vehicleSpec.reverseRatio()
+						: this.vehicleSpec.gearRatio(Math.max(1, this.currentGear));
+
+				double freeRpm = throttleInput
+						? Math.min(this.vehicleSpec.revLimiterRpm(), 3600.0)
+						: this.vehicleSpec.idleRpm();
+				double coupledRpm = Math.min(
+						this.vehicleSpec.revLimiterRpm(),
+						this.calculateCoupledRpm(speed, ratio)
+				);
+
+				double clutch = this.getClutchTorqueScale();
+				targetRpm = freeRpm * (1.0 - clutch) + coupledRpm * clutch;
+
+				if (shifting && clutch > 0.70) {
+					targetRpm = Math.max(this.vehicleSpec.idleRpm(), this.engineRpm * 0.86);
+				}
+			}
+		} else {
+			int selector = this.getAutomaticSelector();
+			if (selector == AUTO_PARK) {
+				targetRpm = this.pressingForward
+						? Math.min(this.vehicleSpec.revLimiterRpm(), 3600.0)
+						: this.vehicleSpec.idleRpm();
+			} else {
+				double ratio = selector == AUTO_REVERSE
+						? this.vehicleSpec.reverseRatio()
+						: this.vehicleSpec.gearRatio(Math.max(1, this.currentGear));
+				targetRpm = shifting
+						? Math.max(this.vehicleSpec.idleRpm(), this.engineRpm * 0.86)
+						: Math.min(
+								this.vehicleSpec.revLimiterRpm(),
+								this.calculateCoupledRpm(speed, ratio)
+						);
+			}
+		}
+
 		this.engineRpm += (targetRpm - this.engineRpm) * 0.35;
 	}
 
@@ -1182,13 +1854,30 @@ public class CarEntity extends BoatEntity {
 	}
 
 	public void setVehicleSpec(VehicleSpec vehicleSpec) {
-		VehicleSpec resolved = vehicleSpec == null ? VehicleSpec.HATCHBACK_AUTOMATIC : vehicleSpec;
+		VehicleSpec resolved = vehicleSpec == null
+				? VehicleSpec.HATCHBACK_AUTOMATIC
+				: vehicleSpec;
+		boolean wasManual = this.vehicleSpec != null && this.vehicleSpec.isManual();
+
 		this.vehicleSpec = resolved;
 		this.dataTracker.set(VEHICLE_SPEC_ID, resolved.id());
-		this.currentGear = resolved.isManual()
-				? MathHelper.clamp(this.currentGear, -1, resolved.gearCount())
-				: MathHelper.clamp(this.currentGear, 1, resolved.gearCount());
-		this.engineRpm = Math.max(resolved.idleRpm(), this.engineRpm);
+
+		if (resolved.isManual()) {
+			this.currentGear = wasManual
+					? MathHelper.clamp(this.currentGear, -1, resolved.gearCount())
+					: 0;
+			this.reverseEngaged = this.currentGear < 0;
+		} else {
+			this.currentGear = MathHelper.clamp(this.currentGear, 1, resolved.gearCount());
+			if (wasManual) {
+				this.setAutomaticSelector(AUTO_PARK, true);
+			}
+			this.reverseEngaged = this.getAutomaticSelector() == AUTO_REVERSE;
+		}
+
+		this.engineRpm = this.isEngineRunning()
+				? Math.max(resolved.idleRpm(), this.engineRpm)
+				: 0.0;
 	}
 
 	public boolean isManualTransmission() {
@@ -1212,7 +1901,7 @@ public class CarEntity extends BoatEntity {
 	public boolean hasThrottleInput() {
 		return this.shouldUseSyncedVisualState()
 				? this.dataTracker.get(SYNCED_THROTTLE)
-				: this.pressingForward || this.pressingBack;
+				: this.isThrottleInputPressed();
 	}
 
 	public boolean isChangingGear() {
@@ -1248,8 +1937,7 @@ public class CarEntity extends BoatEntity {
 	}
 
 	private boolean calculateBrakeInputActive() {
-		return (this.lastForwardSpeed > 0.03 && this.pressingBack)
-				|| (this.lastForwardSpeed < -0.03 && this.pressingForward);
+		return this.isBrakeInputPressed();
 	}
 
 	public boolean areHeadlightsOn() {
@@ -1286,8 +1974,7 @@ public class CarEntity extends BoatEntity {
 			if (gear == 0) return "N";
 			return Integer.toString(gear);
 		}
-		if (reverse || forwardSpeed < -0.01) return "R";
-		return "D" + Math.max(1, gear);
+		return this.getAutomaticSelectorDisplay();
 	}
 
 	public String getGearDisplay() {
@@ -1300,9 +1987,7 @@ public class CarEntity extends BoatEntity {
 			if (gear == 0 || shifting) return "N";
 			return Integer.toString(gear);
 		}
-		if (shifting) return "N";
-		if (reverse || forwardSpeed < -0.01) return "R";
-		return "D" + gear;
+		return this.getAutomaticSelectorDisplay();
 	}
 
 	public double getCurrentGrip() {

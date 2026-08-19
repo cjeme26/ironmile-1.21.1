@@ -21,6 +21,9 @@
   "tooltip.ironmile.manual": "Manual",
   "tooltip.ironmile.model_label": "Model: ",
   "tooltip.ironmile.yellow_hatchback": "Yellow Hatchback",
-  "key.ironmile.shift_up": "Shift Up",
-  "key.ironmile.shift_down": "Shift Down"
+  "key.ironmile.shift_up": "Shift / Selector Up",
+  "key.ironmile.shift_down": "Shift / Selector Down",
+  "key.ironmile.clutch": "Clutch",
+  "key.ironmile.exit_vehicle": "Exit Vehicle",
+  "container.ironmile.hatchback_trunk": "Hatchback Trunk"
 }

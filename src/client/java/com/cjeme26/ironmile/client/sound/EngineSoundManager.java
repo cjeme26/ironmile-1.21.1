@@ -26,7 +26,7 @@ public final class EngineSoundManager {
 		Set<Integer> audibleCars = new HashSet<>();
 		for (Entity entity : client.world.getEntities()) {
 			if (!(entity instanceof CarEntity car)
-					|| !car.hasPassengers()
+					|| !car.isEngineRunning()
 					|| car.squaredDistanceTo(client.player) > AUDIBLE_DISTANCE_SQUARED) {
 				continue;
 			}

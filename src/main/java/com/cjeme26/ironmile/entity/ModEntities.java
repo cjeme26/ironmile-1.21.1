@@ -11,7 +11,11 @@ public final class ModEntities {
 			Registries.ENTITY_TYPE,
 			IronMile.id("car"),
 			EntityType.Builder.<CarEntity>create(CarEntity::new, SpawnGroup.MISC)
-					.dimensions(1.8F, 0.9F)
+					/*
+					 * CC0 rendered shell is about 1.85 blocks wide and 1.50 high.
+					 * The previous 0.9-high core sat far inside the visible body.
+					 */
+					.dimensions(1.85F, 1.45F)
 					.maxTrackingRange(10)
 					.trackingTickInterval(1)
 					.build("ironmile:car")

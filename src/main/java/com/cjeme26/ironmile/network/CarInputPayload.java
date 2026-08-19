@@ -6,7 +6,7 @@ import net.minecraft.network.codec.PacketCodec;
 import net.minecraft.network.codec.PacketCodecs;
 import net.minecraft.network.packet.CustomPayload;
 
-/** Sends the controlling player's current WASD state to server simulation. */
+/** Sends the controlling player's current driving inputs to server simulation. */
 public record CarInputPayload(
 		int entityId,
 		int inputMask
@@ -15,6 +15,7 @@ public record CarInputPayload(
 	public static final int RIGHT = 2;
 	public static final int FORWARD = 4;
 	public static final int BACK = 8;
+	public static final int CLUTCH = 16;
 
 	public static final Id<CarInputPayload> ID = new Id<>(IronMile.id("car_input"));
 	public static final PacketCodec<RegistryByteBuf, CarInputPayload> CODEC = PacketCodec.tuple(
@@ -39,6 +40,10 @@ public record CarInputPayload(
 
 	public boolean back() {
 		return (this.inputMask & BACK) != 0;
+	}
+
+	public boolean clutch() {
+		return (this.inputMask & CLUTCH) != 0;
 	}
 
 	@Override
