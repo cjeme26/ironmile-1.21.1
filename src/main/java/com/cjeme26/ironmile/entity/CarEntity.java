@@ -1,5 +1,6 @@
 package com.cjeme26.ironmile.entity;
 
+import com.cjeme26.ironmile.item.CarItem;
 import com.cjeme26.ironmile.item.ModItems;
 import com.cjeme26.ironmile.item.TireSetItem;
 import net.fabricmc.fabric.api.screenhandler.v1.ExtendedScreenHandlerFactory;
@@ -11,6 +12,7 @@ import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityDimensions;
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.EntityPose;
+import net.minecraft.entity.damage.DamageSource;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.MovementType;
 import net.minecraft.entity.data.DataTracker;
@@ -21,8 +23,11 @@ import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.entity.vehicle.BoatEntity;
 import net.minecraft.inventory.Inventories;
 import net.minecraft.inventory.Inventory;
+import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NbtCompound;
+import net.minecraft.component.DataComponentTypes;
+import net.minecraft.registry.tag.ItemTags;
 import net.minecraft.text.Text;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.Hand;
@@ -33,6 +38,7 @@ import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.util.collection.DefaultedList;
 import net.minecraft.util.shape.VoxelShape;
+import net.minecraft.world.GameRules;
 import net.minecraft.world.World;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
@@ -136,7 +142,7 @@ public class CarEntity extends BoatEntity implements Inventory {
 	private static final String TRUNK_NBT_KEY = "IronMileTrunk";
 	private static final int TRUNK_SIZE = 9;
 	private static final int FUEL_CAPACITY_ML = 45_000;
-	private static final int INITIAL_FUEL_ML = 11_250;
+	private static final int INITIAL_FUEL_ML = 0;
 	private static final int PROTOTYPE_FUEL_ITEM_ML = 5_000;
 	private static final double IDLE_FUEL_USE_ML_PER_TICK = 0.12;
 	private static final double RPM_FUEL_USE_ML_PER_TICK = 0.18;
@@ -455,6 +461,79 @@ public class CarEntity extends BoatEntity implements Inventory {
 					this.trunkInventory,
 					this.getRegistryManager()
 			);
+		}
+	}
+
+	/**
+	 * In survival the car is a mechanical object, not a boat that can be punched
+	 * apart by hand. A pickaxe is required to dismantle it for pickup.
+	 *
+	 * Creative keeps vanilla vehicle behavior so a player can remove it quickly.
+	 */
+	@Override
+	public boolean damage(DamageSource source, float amount) {
+		Entity attacker = source.getAttacker();
+		if (attacker instanceof PlayerEntity player && !player.getAbilities().creativeMode) {
+			if (!player.getMainHandStack().isIn(ItemTags.PICKAXES)) {
+				return false;
+			}
+		}
+		return super.damage(source, amount);
+	}
+
+	/**
+	 * Never expose the inherited boat item as this vehicle's representative item.
+	 */
+	@Override
+	public Item asItem() {
+		return this.isManualTransmission() ? ModItems.CAR_MANUAL : ModItems.CAR;
+	}
+
+	/**
+	 * Pick-block and destruction both use a configured IronMile car stack.
+	 */
+	@Override
+	public ItemStack getPickBlockStack() {
+		return this.createDroppedCarStack();
+	}
+
+	private ItemStack createDroppedCarStack() {
+		ItemStack carStack = new ItemStack(this.asItem());
+		CarItem.setInstalledTireType(carStack, this.getTireType());
+		CarItem.setStoredFuelMilliliters(carStack, this.getFuelMilliliters());
+
+		if (this.hasCustomName()) {
+			carStack.set(DataComponentTypes.CUSTOM_NAME, this.getCustomName());
+		}
+		return carStack;
+	}
+
+	/**
+	 * VehicleEntity's default implementation calls asItem(), which used to turn
+	 * the inherited BoatEntity into a vanilla boat drop. Build our own configured
+	 * stack instead so transmission and installed tires survive pickup.
+	 */
+	@Override
+	protected void killAndDropSelf(DamageSource source) {
+		this.kill();
+
+		if (!this.getWorld().getGameRules().getBoolean(GameRules.DO_ENTITY_DROPS)) {
+			return;
+		}
+
+		this.dropStack(this.createDroppedCarStack());
+
+		/*
+		 * Do not silently delete anything the player left in the trunk when the
+		 * vehicle is dismantled. The car item itself remains a simple one-item
+		 * vehicle representation; trunk contents spill beside it like a container.
+		 */
+		for (int slot = 0; slot < this.trunkInventory.size(); slot++) {
+			ItemStack trunkStack = this.trunkInventory.get(slot);
+			if (!trunkStack.isEmpty()) {
+				this.dropStack(trunkStack.copy());
+				this.trunkInventory.set(slot, ItemStack.EMPTY);
+			}
 		}
 	}
 

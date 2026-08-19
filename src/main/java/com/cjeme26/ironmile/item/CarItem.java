@@ -22,6 +22,7 @@ import java.util.List;
 
 public class CarItem extends Item {
 	private static final String INSTALLED_TIRE_KEY = "IronMileInstalledTireType";
+	private static final String STORED_FUEL_KEY = "IronMileStoredFuelMilliliters";
 
 	private final VehicleSpec vehicleSpec;
 
@@ -60,6 +61,7 @@ public class CarItem extends Item {
 			CarEntity car = new CarEntity(ModEntities.CAR, world);
 			car.setVehicleSpec(this.vehicleSpec);
 			car.setTireType(getInstalledTireType(context.getStack()));
+			car.setFuelMilliliters(getStoredFuelMilliliters(context.getStack()));
 			float yaw = player == null ? 0.0F : player.getYaw();
 			car.refreshPositionAndAngles(
 					spawnPos.getX() + 0.5,
@@ -94,5 +96,20 @@ public class CarItem extends Item {
 			return CarEntity.TireType.ALL_SEASON;
 		}
 		return CarEntity.TireType.fromOrdinal(nbt.getInt(INSTALLED_TIRE_KEY));
+	}
+
+	public static void setStoredFuelMilliliters(ItemStack stack, int fuelMilliliters) {
+		NbtComponent.set(DataComponentTypes.CUSTOM_DATA, stack, nbt ->
+				nbt.putInt(STORED_FUEL_KEY, Math.max(0, fuelMilliliters)));
+	}
+
+	public static int getStoredFuelMilliliters(ItemStack stack) {
+		NbtComponent data = stack.getOrDefault(DataComponentTypes.CUSTOM_DATA, NbtComponent.DEFAULT);
+		NbtCompound nbt = data.copyNbt();
+		if (!nbt.contains(STORED_FUEL_KEY)) {
+			// Newly assembled cars and old car items with no stored-fuel field start empty.
+			return 0;
+		}
+		return Math.max(0, nbt.getInt(STORED_FUEL_KEY));
 	}
 }
