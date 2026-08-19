@@ -1,3 +1,6 @@
 {
-  "parent": "ironmile:item/winter_tires"
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "ironmile:item/winter_tire_set"
+  }
 }

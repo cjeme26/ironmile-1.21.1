@@ -1,3 +1,6 @@
 {
-  "parent": "ironmile:item/all_season_tires"
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "ironmile:item/all_season_tire_set"
+  }
 }

@@ -71,5 +71,10 @@
   "recipe.ironmile.automatic_transmission": "Automatic Transmission",
   "recipe.ironmile.automatic_transmission.detail": "Redstone + 2 gold + furnace + diamond.",
   "recipe.ironmile.yellow_hatchback_assembly": "Yellow Hatchback",
-  "recipe.ironmile.yellow_hatchback_assembly.detail": "Body + your choice of transmission + Tire Set."
+  "recipe.ironmile.yellow_hatchback_assembly.detail": "Body + your choice of transmission + Tire Set.",
+  "gui.ironmile.workbench.transmission_short": "Trans.",
+  "gui.ironmile.workbench.missing_materials": "You do not have the materials needed to craft this item.",
+  "gui.ironmile.workbench.have_need": "Have: %s / Need: %s",
+  "gui.ironmile.workbench.any_transmission": "Any Transmission",
+  "gui.ironmile.workbench.any_tire_set": "Any Tire Set"
 }

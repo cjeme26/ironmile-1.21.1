@@ -1,3 +1,6 @@
 {
-  "parent": "ironmile:item/summer_tires"
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "ironmile:item/summer_tire_set"
+  }
 }

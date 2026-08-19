@@ -3,18 +3,26 @@ package com.cjeme26.ironmile.client.screen;
 import com.cjeme26.ironmile.screen.MechanicsWorkbenchScreenHandler;
 import com.cjeme26.ironmile.screen.MechanicsWorkbenchScreenHandler.Page;
 import com.cjeme26.ironmile.screen.MechanicsWorkbenchScreenHandler.RecipeBookEntry;
+import com.cjeme26.ironmile.screen.MechanicsWorkbenchScreenHandler.RecipeRequirement;
 import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
 import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.text.Text;
+import net.minecraft.util.Formatting;
+import net.minecraft.util.Identifier;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Vanilla-style Alpha 2 interface for the Mechanic's Workbench.
- * The right-hand recipe book is always populated; there is no discovery system.
+ * Vanilla-style Mechanic's Workbench UI.
+ * The right-hand catalogue is always visible and never uses recipe discovery.
  */
 public final class MechanicsWorkbenchScreen extends HandledScreen<MechanicsWorkbenchScreenHandler> {
+	private static final Identifier CRAFTING_TABLE_TEXTURE =
+			Identifier.ofVanilla("textures/gui/container/crafting_table.png");
+
 	private static final int BG = 0xFFC6C6C6;
 	private static final int LIGHT = 0xFFE6E6E6;
 	private static final int MID = 0xFF8B8B8B;
@@ -23,8 +31,12 @@ public final class MechanicsWorkbenchScreen extends HandledScreen<MechanicsWorkb
 	private static final int TAB_SELECTED = 0xFFE0E0E0;
 	private static final int TAB_IDLE = 0xFFAFAFAF;
 	private static final int RECIPE_AVAILABLE = 0xFFD7D7D7;
-	private static final int RECIPE_UNAVAILABLE = 0xFF8F8F8F;
+	private static final int RECIPE_AVAILABLE_HOVER = 0xFFE4E4E4;
+	private static final int RECIPE_UNAVAILABLE = 0xFF747474;
+	private static final int RECIPE_UNAVAILABLE_HOVER = 0xFF818181;
 	private static final int RECIPE_SELECTED = 0xFFF1C75B;
+	private static final int REQUIREMENT_AVAILABLE = 0xFFB5B5B5;
+	private static final int REQUIREMENT_MISSING = 0xFF9A5959;
 
 	private static final int PANEL_WIDTH = 286;
 	private static final int PANEL_HEIGHT = 220;
@@ -33,7 +45,9 @@ public final class MechanicsWorkbenchScreen extends HandledScreen<MechanicsWorkb
 	private static final int RECIPE_W = 98;
 	private static final int RECIPE_H = 190;
 
-	private int selectedRecipeId = MechanicsWorkbenchScreenHandler.BODY_HATCHBACK;
+	private int selectedBodyRecipeId = MechanicsWorkbenchScreenHandler.BODY_HATCHBACK;
+	private int selectedPartsRecipeId = MechanicsWorkbenchScreenHandler.PART_SUMMER_TIRE;
+	private int selectedAssemblyRecipeId = MechanicsWorkbenchScreenHandler.ASSEMBLY_HATCHBACK;
 
 	public MechanicsWorkbenchScreen(
 			MechanicsWorkbenchScreenHandler handler,
@@ -53,7 +67,7 @@ public final class MechanicsWorkbenchScreen extends HandledScreen<MechanicsWorkb
 	public void render(DrawContext context, int mouseX, int mouseY, float delta) {
 		this.renderBackground(context, mouseX, mouseY, delta);
 		super.render(context, mouseX, mouseY, delta);
-		this.drawRecipeTooltip(context, mouseX, mouseY);
+		this.drawCatalogueTooltip(context, mouseX, mouseY);
 		this.drawMouseoverTooltip(context, mouseX, mouseY);
 	}
 
@@ -62,8 +76,6 @@ public final class MechanicsWorkbenchScreen extends HandledScreen<MechanicsWorkb
 		int left = this.x;
 		int top = this.y;
 		drawVanillaPanel(context, left, top, this.backgroundWidth, this.backgroundHeight);
-
-		// Visually separate the vehicle work area from the always-visible recipe book.
 		drawRecessedPanel(context, left + RECIPE_X, top + RECIPE_Y, RECIPE_W, RECIPE_H);
 
 		Page page = this.handler.getPage();
@@ -85,12 +97,20 @@ public final class MechanicsWorkbenchScreen extends HandledScreen<MechanicsWorkb
 			drawVanillaSlot(context, left + 107, top + 58);
 		}
 
-		// Shared output slot + simple assembly/crafting arrow.
+		// Shared output slot and the actual vanilla crafting-table arrow pixels.
 		drawVanillaSlot(context, left + 148, top + 58);
-		context.fill(left + 126, top + 64, left + 141, top + 67, DARK);
-		context.fill(left + 137, top + 61, left + 141, top + 70, DARK);
+		context.drawTexture(
+				CRAFTING_TABLE_TEXTURE,
+				left + 123,
+				top + 59,
+				90.0F,
+				35.0F,
+				22,
+				15,
+				256,
+				256
+		);
 
-		// Player inventory.
 		for (int row = 0; row < 3; row++) {
 			for (int column = 0; column < 9; column++) {
 				drawVanillaSlot(context, left + 8 + column * 18, top + 139 + row * 18);
@@ -120,9 +140,9 @@ public final class MechanicsWorkbenchScreen extends HandledScreen<MechanicsWorkb
 		this.drawTab(context, 112, 21, 61, "gui.ironmile.workbench.assembly", Page.ASSEMBLY);
 
 		if (this.handler.getPage() == Page.ASSEMBLY) {
-			context.drawText(this.textRenderer, Text.translatable("gui.ironmile.workbench.body_slot"), 20, 82, TEXT, false);
-			context.drawText(this.textRenderer, Text.translatable("gui.ironmile.workbench.transmission_slot"), 51, 92, TEXT, false);
-			context.drawText(this.textRenderer, Text.translatable("gui.ironmile.workbench.tires_slot"), 106, 82, TEXT, false);
+			this.drawCenteredSlotLabel(context, 23, 43, "gui.ironmile.workbench.body_slot");
+			this.drawCenteredSlotLabel(context, 65, 43, "gui.ironmile.workbench.transmission_short");
+			this.drawCenteredSlotLabel(context, 107, 43, "gui.ironmile.workbench.tires_slot");
 		}
 
 		context.drawText(
@@ -134,19 +154,18 @@ public final class MechanicsWorkbenchScreen extends HandledScreen<MechanicsWorkb
 				false
 		);
 
-		RecipeBookEntry selected = this.findRecipe(this.selectedRecipeId);
+		RecipeBookEntry selected = this.findRecipe(this.getSelectedRecipeId());
 		if (selected != null && selected.page() == this.handler.getPage()) {
 			int detailY = RECIPE_Y + 102;
 			context.drawTextWrapped(this.textRenderer, selected.name(), RECIPE_X + 7, detailY, 84, TEXT);
-			context.drawTextWrapped(
-					this.textRenderer,
-					selected.detail(),
-					RECIPE_X + 7,
-					detailY + 23,
-					84,
-					0xFF666666
-			);
+			this.drawRequirements(context, selected.id(), detailY + 22);
 		}
+	}
+
+	private void drawCenteredSlotLabel(DrawContext context, int slotX, int y, String key) {
+		Text label = Text.translatable(key);
+		int labelX = slotX + (16 - this.textRenderer.getWidth(label)) / 2;
+		context.drawText(this.textRenderer, label, labelX, y, TEXT, false);
 	}
 
 	private void drawTab(DrawContext context, int x, int y, int width, String key, Page page) {
@@ -165,29 +184,106 @@ public final class MechanicsWorkbenchScreen extends HandledScreen<MechanicsWorkb
 		List<RecipeBookEntry> entries = MechanicsWorkbenchScreenHandler.getRecipeBookEntries(this.handler.getPage());
 		int startX = this.x + RECIPE_X + 6;
 		int startY = this.y + RECIPE_Y + 21;
+		int selectedId = this.getSelectedRecipeId();
+
 		for (int index = 0; index < entries.size(); index++) {
 			RecipeBookEntry entry = entries.get(index);
 			int column = index % 4;
 			int row = index / 4;
 			int cellX = startX + column * 22;
 			int cellY = startY + row * 22;
-			boolean informational = entry.page() == Page.ASSEMBLY;
-			boolean available = informational
-					|| (this.client != null && this.client.player != null
-					&& this.handler.canAutofillRecipe(this.client.player, entry.id()));
-			int cellColor = entry.id() == this.selectedRecipeId
-					? RECIPE_SELECTED
-					: (available ? RECIPE_AVAILABLE : RECIPE_UNAVAILABLE);
+			boolean available = this.client != null
+					&& this.client.player != null
+					&& this.handler.canCraftRecipe(this.client.player, entry.id());
+			boolean hovered = mouseX >= cellX && mouseX < cellX + 20
+					&& mouseY >= cellY && mouseY < cellY + 20;
+
+			int cellColor;
+			if (entry.id() == selectedId) {
+				cellColor = RECIPE_SELECTED;
+			} else if (available) {
+				cellColor = hovered ? RECIPE_AVAILABLE_HOVER : RECIPE_AVAILABLE;
+			} else {
+				cellColor = hovered ? RECIPE_UNAVAILABLE_HOVER : RECIPE_UNAVAILABLE;
+			}
+
 			context.fill(cellX, cellY, cellX + 20, cellY + 20, DARK);
 			context.fill(cellX + 1, cellY + 1, cellX + 19, cellY + 19, cellColor);
 			context.drawItem(entry.icon(), cellX + 2, cellY + 2);
+			if (!available && entry.id() != selectedId) {
+				context.fill(cellX + 2, cellY + 2, cellX + 18, cellY + 18, 0x28000000);
+			}
 		}
 	}
 
-	private void drawRecipeTooltip(DrawContext context, int mouseX, int mouseY) {
-		RecipeBookEntry hovered = this.recipeAt(mouseX, mouseY);
-		if (hovered == null) return;
-		context.drawTooltip(this.textRenderer, List.of(hovered.name(), hovered.detail()), mouseX, mouseY);
+	private void drawRequirements(DrawContext context, int recipeId, int startY) {
+		if (this.client == null || this.client.player == null) return;
+		List<RecipeRequirement> requirements = MechanicsWorkbenchScreenHandler.getRecipeRequirements(recipeId);
+		int startX = RECIPE_X + 7;
+
+		for (int index = 0; index < requirements.size(); index++) {
+			RecipeRequirement requirement = requirements.get(index);
+			int column = index % 4;
+			int row = index / 4;
+			int x = startX + column * 21;
+			int y = startY + row * 22;
+			int available = this.handler.getAvailableCount(this.client.player, recipeId, requirement);
+			boolean hasEnough = available >= requirement.required();
+
+			context.fill(x, y, x + 20, y + 20, DARK);
+			context.fill(
+					x + 1,
+					y + 1,
+					x + 19,
+					y + 19,
+					hasEnough ? REQUIREMENT_AVAILABLE : REQUIREMENT_MISSING
+			);
+			context.drawItem(requirement.icon(), x + 2, y + 2);
+			if (!hasEnough) {
+				// Dim the icon slightly while keeping it readable over the red slot.
+				context.fill(x + 2, y + 2, x + 18, y + 18, 0x48000000);
+			}
+
+			if (requirement.required() > 1) {
+				String count = Integer.toString(requirement.required());
+				int countX = x + 18 - this.textRenderer.getWidth(count);
+				context.drawText(this.textRenderer, count, countX, y + 11, 0xFFFFFFFF, true);
+			}
+		}
+	}
+
+	private void drawCatalogueTooltip(DrawContext context, int mouseX, int mouseY) {
+		RecipeBookEntry hoveredRecipe = this.recipeAt(mouseX, mouseY);
+		if (hoveredRecipe != null) {
+			List<Text> lines = new ArrayList<>();
+			lines.add(hoveredRecipe.name());
+			boolean available = this.client != null
+					&& this.client.player != null
+					&& this.handler.canCraftRecipe(this.client.player, hoveredRecipe.id());
+			if (!available) {
+				lines.add(Text.translatable("gui.ironmile.workbench.missing_materials").formatted(Formatting.RED));
+			}
+			context.drawTooltip(this.textRenderer, lines, mouseX, mouseY);
+			return;
+		}
+
+		RequirementHover hoveredRequirement = this.requirementAt(mouseX, mouseY);
+		if (hoveredRequirement == null) return;
+
+		List<Text> lines = new ArrayList<>();
+		lines.add(hoveredRequirement.requirement().label());
+		Text countLine = Text.translatable(
+				"gui.ironmile.workbench.have_need",
+				hoveredRequirement.available(),
+				hoveredRequirement.requirement().required()
+		);
+		if (hoveredRequirement.available() < hoveredRequirement.requirement().required()) {
+			countLine = countLine.copy().formatted(Formatting.RED);
+		} else {
+			countLine = countLine.copy().formatted(Formatting.GRAY);
+		}
+		lines.add(countLine);
+		context.drawTooltip(this.textRenderer, lines, mouseX, mouseY);
 	}
 
 	private RecipeBookEntry recipeAt(double mouseX, double mouseY) {
@@ -206,6 +302,32 @@ public final class MechanicsWorkbenchScreen extends HandledScreen<MechanicsWorkb
 		return null;
 	}
 
+	private RequirementHover requirementAt(double mouseX, double mouseY) {
+		if (this.client == null || this.client.player == null) return null;
+		int recipeId = this.getSelectedRecipeId();
+		RecipeBookEntry selected = this.findRecipe(recipeId);
+		if (selected == null) return null;
+
+		int detailY = this.y + RECIPE_Y + 102;
+		int startX = this.x + RECIPE_X + 7;
+		int startY = detailY + 22;
+		List<RecipeRequirement> requirements = MechanicsWorkbenchScreenHandler.getRecipeRequirements(recipeId);
+		for (int index = 0; index < requirements.size(); index++) {
+			int column = index % 4;
+			int row = index / 4;
+			int cellX = startX + column * 21;
+			int cellY = startY + row * 22;
+			if (mouseX >= cellX && mouseX < cellX + 20 && mouseY >= cellY && mouseY < cellY + 20) {
+				RecipeRequirement requirement = requirements.get(index);
+				return new RequirementHover(
+						requirement,
+						this.handler.getAvailableCount(this.client.player, recipeId, requirement)
+				);
+			}
+		}
+		return null;
+	}
+
 	private RecipeBookEntry findRecipe(int recipeId) {
 		for (RecipeBookEntry entry : MechanicsWorkbenchScreenHandler.getRecipeBookEntries(this.handler.getPage())) {
 			if (entry.id() == recipeId) return entry;
@@ -219,8 +341,6 @@ public final class MechanicsWorkbenchScreen extends HandledScreen<MechanicsWorkb
 			Page clickedPage = this.tabAt(mouseX, mouseY);
 			if (clickedPage != null) {
 				this.handler.setPage(clickedPage.id());
-				List<RecipeBookEntry> entries = MechanicsWorkbenchScreenHandler.getRecipeBookEntries(clickedPage);
-				this.selectedRecipeId = entries.isEmpty() ? -1 : entries.getFirst().id();
 				if (this.client != null && this.client.interactionManager != null) {
 					this.client.interactionManager.clickButton(this.handler.syncId, clickedPage.id());
 				}
@@ -229,21 +349,37 @@ public final class MechanicsWorkbenchScreen extends HandledScreen<MechanicsWorkb
 
 			RecipeBookEntry recipe = this.recipeAt(mouseX, mouseY);
 			if (recipe != null) {
-				this.selectedRecipeId = recipe.id();
+				this.setSelectedRecipeId(recipe.page(), recipe.id());
 				if (recipe.page() != Page.ASSEMBLY
 						&& this.client != null
 						&& this.client.player != null
 						&& this.client.interactionManager != null
 						&& this.handler.canAutofillRecipe(this.client.player, recipe.id())) {
-					this.client.interactionManager.clickButton(
-							this.handler.syncId,
-							MechanicsWorkbenchScreenHandler.RECIPE_BUTTON_BASE + recipe.id()
-					);
+					int base = Screen.hasShiftDown()
+							? MechanicsWorkbenchScreenHandler.RECIPE_SHIFT_BUTTON_BASE
+							: MechanicsWorkbenchScreenHandler.RECIPE_BUTTON_BASE;
+					this.client.interactionManager.clickButton(this.handler.syncId, base + recipe.id());
 				}
 				return true;
 			}
 		}
 		return super.mouseClicked(mouseX, mouseY, button);
+	}
+
+	private int getSelectedRecipeId() {
+		return switch (this.handler.getPage()) {
+			case BODY -> this.selectedBodyRecipeId;
+			case PARTS -> this.selectedPartsRecipeId;
+			case ASSEMBLY -> this.selectedAssemblyRecipeId;
+		};
+	}
+
+	private void setSelectedRecipeId(Page page, int recipeId) {
+		switch (page) {
+			case BODY -> this.selectedBodyRecipeId = recipeId;
+			case PARTS -> this.selectedPartsRecipeId = recipeId;
+			case ASSEMBLY -> this.selectedAssemblyRecipeId = recipeId;
+		}
 	}
 
 	private Page tabAt(double mouseX, double mouseY) {
@@ -278,5 +414,8 @@ public final class MechanicsWorkbenchScreen extends HandledScreen<MechanicsWorkb
 		context.fill(x, y, x + 16, y + 16, MID);
 		context.fill(x + 16, y, x + 17, y + 17, LIGHT);
 		context.fill(x, y + 16, x + 17, y + 17, LIGHT);
+	}
+
+	private record RequirementHover(RecipeRequirement requirement, int available) {
 	}
 }

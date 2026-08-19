@@ -20,6 +20,7 @@ import net.minecraft.text.Text;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -58,7 +59,26 @@ public final class MechanicsWorkbenchScreenHandler extends ScreenHandler {
 	public record RecipeBookEntry(int id, Page page, ItemStack icon, Text name, Text detail) {
 	}
 
+	/**
+	 * Compact recipe-catalogue requirement. Assembly can accept alternatives.
+	 */
+	public record RecipeRequirement(
+			ItemStack icon,
+			List<Item> options,
+			int required,
+			Text label
+	) {
+		public boolean accepts(ItemStack stack) {
+			if (stack.isEmpty()) return false;
+			for (Item option : this.options) {
+				if (stack.isOf(option)) return true;
+			}
+			return false;
+		}
+	}
+
 	public static final int RECIPE_BUTTON_BASE = 1000;
+	public static final int RECIPE_SHIFT_BUTTON_BASE = 2000;
 
 	public static final int BODY_HATCHBACK = 0;
 
@@ -264,77 +284,68 @@ public final class MechanicsWorkbenchScreenHandler extends ScreenHandler {
 			return true;
 		}
 
+		if (id >= RECIPE_SHIFT_BUTTON_BASE) {
+			return this.autofillRecipe(player, id - RECIPE_SHIFT_BUTTON_BASE, true);
+		}
+
 		if (id >= RECIPE_BUTTON_BASE) {
-			int recipeId = id - RECIPE_BUTTON_BASE;
-			return this.autofillRecipe(player, recipeId);
+			return this.autofillRecipe(player, id - RECIPE_BUTTON_BASE, false);
 		}
 
 		return super.onButtonClick(player, id);
 	}
 
 	public boolean canAutofillRecipe(PlayerEntity player, int recipeId) {
-		List<Item> required = this.getAutofillIngredients(recipeId);
-		if (required == null) {
-			return false;
-		}
+		return this.getMaximumAutofillCrafts(player, recipeId) >= 1;
+	}
 
-		Map<Item, Integer> needed = countItems(required);
-		Map<Item, Integer> available = new HashMap<>();
-
-		for (int i = 0; i < player.getInventory().size(); i++) {
-			ItemStack stack = player.getInventory().getStack(i);
-			if (!stack.isEmpty()) {
-				available.merge(stack.getItem(), stack.getCount(), Integer::sum);
-			}
-		}
-
-		Inventory active = this.getGridForRecipe(recipeId);
-		if (active != null) {
-			for (int i = 0; i < active.size(); i++) {
-				ItemStack stack = active.getStack(i);
-				if (!stack.isEmpty()) {
-					available.merge(stack.getItem(), stack.getCount(), Integer::sum);
-				}
-			}
-		}
-
-		for (Map.Entry<Item, Integer> requirement : needed.entrySet()) {
-			if (available.getOrDefault(requirement.getKey(), 0) < requirement.getValue()) {
-				return false;
-			}
+	public boolean canCraftRecipe(PlayerEntity player, int recipeId) {
+		List<RecipeRequirement> requirements = getRecipeRequirements(recipeId);
+		if (requirements.isEmpty()) return false;
+		for (RecipeRequirement requirement : requirements) {
+			if (this.getAvailableCount(player, recipeId, requirement) < requirement.required()) return false;
 		}
 		return true;
 	}
 
-	private boolean autofillRecipe(PlayerEntity player, int recipeId) {
-		Page targetPage = pageForRecipe(recipeId);
-		if (targetPage == null || targetPage != this.page) {
-			return false;
+	public int getAvailableCount(PlayerEntity player, int recipeId, RecipeRequirement requirement) {
+		int count = 0;
+		for (int i = 0; i < player.getInventory().size(); i++) {
+			ItemStack stack = player.getInventory().getStack(i);
+			if (requirement.accepts(stack)) count += stack.getCount();
 		}
+
+		Inventory active = this.getInventoryForRecipe(recipeId);
+		if (active != null) {
+			for (int i = 0; i < active.size(); i++) {
+				ItemStack stack = active.getStack(i);
+				if (requirement.accepts(stack)) count += stack.getCount();
+			}
+		}
+		return count;
+	}
+
+	private boolean autofillRecipe(PlayerEntity player, int recipeId, boolean fillMaximum) {
+		Page targetPage = pageForRecipe(recipeId);
+		if (targetPage == null || targetPage != this.page || targetPage == Page.ASSEMBLY) return false;
 
 		List<Item> ingredients = this.getAutofillIngredients(recipeId);
-		if (ingredients == null || !this.canAutofillRecipe(player, recipeId)) {
-			return false;
-		}
+		if (ingredients == null) return false;
+
+		int crafts = fillMaximum ? this.getMaximumAutofillCrafts(player, recipeId) : 1;
+		if (crafts < 1) return false;
 
 		Inventory target = this.getGridForRecipe(recipeId);
-		if (target == null) {
-			return false;
-		}
+		if (target == null) return false;
 
 		this.changingIngredients = true;
 		try {
 			this.returnInventoryToPlayer(player, target);
 			for (int i = 0; i < ingredients.size(); i++) {
 				Item item = ingredients.get(i);
-				if (item == null) {
-					continue;
-				}
-
-				ItemStack pulled = this.takeOne(player, item);
-				if (pulled.isEmpty()) {
-					return false;
-				}
+				if (item == null) continue;
+				ItemStack pulled = this.takeAmount(player, item, crafts);
+				if (pulled.isEmpty() || pulled.getCount() != crafts) return false;
 				target.setStack(i, pulled);
 			}
 		} finally {
@@ -344,10 +355,48 @@ public final class MechanicsWorkbenchScreenHandler extends ScreenHandler {
 		return true;
 	}
 
+	private int getMaximumAutofillCrafts(PlayerEntity player, int recipeId) {
+		List<Item> ingredients = this.getAutofillIngredients(recipeId);
+		if (ingredients == null) return 0;
+
+		Map<Item, Integer> neededPerCraft = countItems(ingredients);
+		if (neededPerCraft.isEmpty()) return 0;
+		Map<Item, Integer> available = new HashMap<>();
+
+		for (int i = 0; i < player.getInventory().size(); i++) {
+			ItemStack stack = player.getInventory().getStack(i);
+			if (!stack.isEmpty()) available.merge(stack.getItem(), stack.getCount(), Integer::sum);
+		}
+		Inventory active = this.getGridForRecipe(recipeId);
+		if (active != null) {
+			for (int i = 0; i < active.size(); i++) {
+				ItemStack stack = active.getStack(i);
+				if (!stack.isEmpty()) available.merge(stack.getItem(), stack.getCount(), Integer::sum);
+			}
+		}
+
+		int crafts = Integer.MAX_VALUE;
+		for (Map.Entry<Item, Integer> requirement : neededPerCraft.entrySet()) {
+			crafts = Math.min(crafts, available.getOrDefault(requirement.getKey(), 0) / requirement.getValue());
+		}
+		for (Item item : ingredients) {
+			if (item != null) crafts = Math.min(crafts, new ItemStack(item).getMaxCount());
+		}
+		return crafts == Integer.MAX_VALUE ? 0 : Math.max(0, crafts);
+	}
+
 	private Inventory getGridForRecipe(int recipeId) {
 		Page recipePage = pageForRecipe(recipeId);
 		if (recipePage == Page.BODY) return this.bodyGrid;
 		if (recipePage == Page.PARTS) return this.partsGrid;
+		return null;
+	}
+
+	private Inventory getInventoryForRecipe(int recipeId) {
+		Page recipePage = pageForRecipe(recipeId);
+		if (recipePage == Page.BODY) return this.bodyGrid;
+		if (recipePage == Page.PARTS) return this.partsGrid;
+		if (recipePage == Page.ASSEMBLY) return this.assemblyGrid;
 		return null;
 	}
 
@@ -359,6 +408,10 @@ public final class MechanicsWorkbenchScreenHandler extends ScreenHandler {
 	}
 
 	private List<Item> getAutofillIngredients(int recipeId) {
+		return getAutofillIngredientsStatic(recipeId);
+	}
+
+	private static List<Item> getAutofillIngredientsStatic(int recipeId) {
 		if (recipeId == BODY_HATCHBACK) {
 			return List.of(
 					Items.GLASS_PANE, Items.IRON_INGOT, Items.IRON_INGOT, Items.GLASS_PANE,
@@ -429,6 +482,29 @@ public final class MechanicsWorkbenchScreenHandler extends ScreenHandler {
 		return null;
 	}
 
+	public static List<RecipeRequirement> getRecipeRequirements(int recipeId) {
+		if (recipeId == ASSEMBLY_HATCHBACK) {
+			return List.of(
+					new RecipeRequirement(new ItemStack(ModItems.HATCHBACK_BODY), List.of(ModItems.HATCHBACK_BODY), 1, Text.translatable("item.ironmile.hatchback_body")),
+					new RecipeRequirement(new ItemStack(ModItems.MANUAL_TRANSMISSION), List.of(ModItems.MANUAL_TRANSMISSION, ModItems.AUTOMATIC_TRANSMISSION), 1, Text.translatable("gui.ironmile.workbench.any_transmission")),
+					new RecipeRequirement(new ItemStack(ModItems.ALL_SEASON_TIRE_SET), List.of(ModItems.SUMMER_TIRE_SET, ModItems.ALL_SEASON_TIRE_SET, ModItems.WINTER_TIRE_SET), 1, Text.translatable("gui.ironmile.workbench.any_tire_set"))
+			);
+		}
+
+		List<Item> ingredients = getAutofillIngredientsStatic(recipeId);
+		if (ingredients == null) return List.of();
+		Map<Item, Integer> counts = new LinkedHashMap<>();
+		for (Item item : ingredients) {
+			if (item != null) counts.merge(item, 1, Integer::sum);
+		}
+		List<RecipeRequirement> requirements = new ArrayList<>();
+		for (Map.Entry<Item, Integer> entry : counts.entrySet()) {
+			ItemStack stack = new ItemStack(entry.getKey());
+			requirements.add(new RecipeRequirement(stack, List.of(entry.getKey()), entry.getValue(), stack.getName()));
+		}
+		return requirements;
+	}
+
 	@SafeVarargs
 	private static <T> List<T> listWithSlots(T... values) {
 		List<T> list = new ArrayList<>(values.length);
@@ -454,15 +530,19 @@ public final class MechanicsWorkbenchScreenHandler extends ScreenHandler {
 		}
 	}
 
-	private ItemStack takeOne(PlayerEntity player, Item item) {
-		for (int i = 0; i < player.getInventory().size(); i++) {
+	private ItemStack takeAmount(PlayerEntity player, Item item, int amount) {
+		if (amount <= 0) return ItemStack.EMPTY;
+		ItemStack pulled = new ItemStack(item, amount);
+		int remaining = amount;
+		for (int i = 0; i < player.getInventory().size() && remaining > 0; i++) {
 			ItemStack stack = player.getInventory().getStack(i);
 			if (!stack.isOf(item)) continue;
-			ItemStack pulled = stack.split(1);
-			player.getInventory().markDirty();
-			return pulled;
+			int take = Math.min(remaining, stack.getCount());
+			stack.decrement(take);
+			remaining -= take;
 		}
-		return ItemStack.EMPTY;
+		player.getInventory().markDirty();
+		return remaining == 0 ? pulled : ItemStack.EMPTY;
 	}
 
 	private void updateResult() {
@@ -589,7 +669,7 @@ public final class MechanicsWorkbenchScreenHandler extends ScreenHandler {
 			if (!stack.isOf(item)) return false;
 			found += stack.getCount();
 		}
-		return found == count;
+		return found >= count;
 	}
 
 	private void craftCurrentRecipe(PlayerEntity player) {
