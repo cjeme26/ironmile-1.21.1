@@ -20,5 +20,13 @@
   "result": {
     "id": "ironmile:winter_tires",
     "count": 1
-  }
+  },
+  "fabric:load_conditions": [
+    {
+      "condition": "fabric:all_mods_loaded",
+      "values": [
+        "ironmile_disable_legacy_vehicle_recipes"
+      ]
+    }
+  ]
 }

@@ -3,6 +3,7 @@ package com.cjeme26.ironmile.client;
 import com.cjeme26.ironmile.client.render.CarEntityRenderer;
 import com.cjeme26.ironmile.client.sound.EngineSoundManager;
 import com.cjeme26.ironmile.client.screen.FuelScreen;
+import com.cjeme26.ironmile.client.screen.MechanicsWorkbenchScreen;
 import com.cjeme26.ironmile.entity.ModEntities;
 import com.cjeme26.ironmile.entity.CarEntity;
 import com.cjeme26.ironmile.network.HeadlightTogglePayload;
@@ -68,6 +69,7 @@ public class IronMileClient implements ClientModInitializer {
 		EntityRendererRegistry.register(ModEntities.CAR_HOOD_COLLISION, EmptyEntityRenderer::new);
 		EntityRendererRegistry.register(ModEntities.CAR_REAR_COLLISION, EmptyEntityRenderer::new);
 		HandledScreens.register(ModScreenHandlers.FUEL, FuelScreen::new);
+		HandledScreens.register(ModScreenHandlers.MECHANICS_WORKBENCH, MechanicsWorkbenchScreen::new);
 		ClientTickEvents.END_CLIENT_TICK.register(EngineSoundManager::tick);
 
 		ClientTickEvents.START_CLIENT_TICK.register(client -> {

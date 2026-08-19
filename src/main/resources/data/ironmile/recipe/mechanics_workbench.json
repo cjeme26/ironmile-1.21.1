@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": [
+    "III",
+    "PCP",
+    "PPP"
+  ],
+  "key": {
+    "I": { "item": "minecraft:iron_ingot" },
+    "P": { "tag": "minecraft:planks" },
+    "C": { "item": "minecraft:crafting_table" }
+  },
+  "result": {
+    "id": "ironmile:mechanics_workbench",
+    "count": 1
+  }
+}

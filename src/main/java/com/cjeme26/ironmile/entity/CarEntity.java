@@ -1,6 +1,7 @@
 package com.cjeme26.ironmile.entity;
 
-import com.cjeme26.ironmile.item.TireItem;
+import com.cjeme26.ironmile.item.ModItems;
+import com.cjeme26.ironmile.item.TireSetItem;
 import net.fabricmc.fabric.api.screenhandler.v1.ExtendedScreenHandlerFactory;
 import com.cjeme26.ironmile.screen.FuelScreenData;
 import com.cjeme26.ironmile.screen.FuelScreenHandler;
@@ -460,10 +461,26 @@ public class CarEntity extends BoatEntity implements Inventory {
 	@Override
 	public ActionResult interact(PlayerEntity player, Hand hand) {
 		ItemStack heldStack = player.getStackInHand(hand);
-		if (heldStack.getItem() instanceof TireItem tireItem) {
+		if (heldStack.getItem() instanceof TireSetItem tireSetItem) {
+			CarEntity.TireType newTires = tireSetItem.getTireType();
+			CarEntity.TireType oldTires = this.getTireType();
+
+			if (newTires == oldTires) {
+				if (!this.getWorld().isClient) {
+					player.sendMessage(Text.literal(oldTires.getDisplayName() + " already installed"), true);
+				}
+				return ActionResult.success(this.getWorld().isClient);
+			}
+
 			if (!this.getWorld().isClient) {
-				this.setTireType(tireItem.getTireType());
-				player.sendMessage(Text.literal(tireItem.getTireType().getDisplayName() + " installed"), true);
+				this.setTireType(newTires);
+				this.dropStack(new ItemStack(ModItems.getTireSetItem(oldTires)));
+				if (!player.getAbilities().creativeMode) {
+					heldStack.decrement(1);
+				}
+				this.playSound(net.minecraft.sound.SoundEvents.BLOCK_IRON_TRAPDOOR_CLOSE, 0.75F, 0.90F);
+				this.playSound(net.minecraft.sound.SoundEvents.BLOCK_CHAIN_PLACE, 0.45F, 1.15F);
+				player.sendMessage(Text.literal(newTires.getDisplayName() + " installed"), true);
 			}
 			return ActionResult.success(this.getWorld().isClient);
 		}
@@ -2430,7 +2447,7 @@ public class CarEntity extends BoatEntity implements Inventory {
 			return this.displayName;
 		}
 
-		private static TireType fromOrdinal(int ordinal) {
+		public static TireType fromOrdinal(int ordinal) {
 			TireType[] values = values();
 			return ordinal >= 0 && ordinal < values.length ? values[ordinal] : ALL_SEASON;
 		}
