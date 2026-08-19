@@ -270,8 +270,16 @@ public final class MechanicsWorkbenchScreen extends HandledScreen<MechanicsWorkb
 				String count = Integer.toString(requirement.required());
 				int countX = x + 18 - this.textRenderer.getWidth(count);
 				int countY = y + 11;
+
+				/*
+				 * Item rendering uses its own depth. Explicitly lift this overlay
+				 * above it so the quantity can never disappear underneath the icon.
+				 */
+				context.getMatrices().push();
+				context.getMatrices().translate(0.0F, 0.0F, 300.0F);
 				context.fill(countX - 1, countY - 1, x + 19, y + 19, 0xA0000000);
 				context.drawText(this.textRenderer, count, countX, countY, 0xFFFFFFFF, true);
+				context.getMatrices().pop();
 			}
 		}
 	}
@@ -374,8 +382,7 @@ public final class MechanicsWorkbenchScreen extends HandledScreen<MechanicsWorkb
 			RecipeBookEntry recipe = this.recipeAt(mouseX, mouseY);
 			if (recipe != null) {
 				this.setSelectedRecipeId(recipe.page(), recipe.id());
-				if (recipe.page() != Page.ASSEMBLY
-						&& this.client != null
+				if (this.client != null
 						&& this.client.player != null
 						&& this.client.interactionManager != null
 						&& this.handler.canAutofillRecipe(this.client.player, recipe.id())) {

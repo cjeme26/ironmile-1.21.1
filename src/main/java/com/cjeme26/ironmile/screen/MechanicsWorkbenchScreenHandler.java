@@ -102,11 +102,12 @@ public final class MechanicsWorkbenchScreenHandler extends ScreenHandler {
 	private static final int PARTS_END = 21;
 	private static final int ASSEMBLY_START = 21;
 	private static final int ASSEMBLY_END = 24;
-	private static final int OUTPUT_SLOT = 24;
-	private static final int PLAYER_START = 25;
-	private static final int PLAYER_MAIN_END = 52;
-	private static final int HOTBAR_START = 52;
-	private static final int PLAYER_END = 61;
+	private static final int BODY_PARTS_OUTPUT_SLOT = 24;
+	private static final int ASSEMBLY_OUTPUT_SLOT = 25;
+	private static final int PLAYER_START = 26;
+	private static final int PLAYER_MAIN_END = 53;
+	private static final int HOTBAR_START = 53;
+	private static final int PLAYER_END = 62;
 
 	private final ScreenHandlerContext context;
 	private final PlayerInventory playerInventory;
@@ -166,18 +167,14 @@ public final class MechanicsWorkbenchScreenHandler extends ScreenHandler {
 		this.addSlot(new AssemblySlot(this.assemblyGrid, 1, 35, 82, AssemblyKind.TRANSMISSION));
 		this.addSlot(new AssemblySlot(this.assemblyGrid, 2, 91, 65, AssemblyKind.TIRES));
 
-		this.addSlot(new Slot(this.resultInventory, 0, 148, 65) {
-			@Override
-			public boolean canInsert(ItemStack stack) {
-				return false;
-			}
-
-			@Override
-			public void onTakeItem(PlayerEntity player, ItemStack stack) {
-				super.onTakeItem(player, stack);
-				MechanicsWorkbenchScreenHandler.this.craftCurrentRecipe(player);
-			}
-		});
+		/*
+		 * Two page-aware views of the same result inventory.
+		 *
+		 * This keeps the item exactly centered in the slot drawn on each page:
+		 * Body/Parts use y=58, while the triangle Assembly layout uses y=65.
+		 */
+		this.addSlot(new ResultSlot(this.resultInventory, 0, 148, 58, false));
+		this.addSlot(new ResultSlot(this.resultInventory, 0, 148, 65, true));
 
 		// Player inventory.
 		for (int row = 0; row < 3; row++) {
@@ -296,6 +293,9 @@ public final class MechanicsWorkbenchScreenHandler extends ScreenHandler {
 	}
 
 	public boolean canAutofillRecipe(PlayerEntity player, int recipeId) {
+		if (recipeId == ASSEMBLY_HATCHBACK) {
+			return this.canCraftRecipe(player, recipeId);
+		}
 		return this.getMaximumAutofillCrafts(player, recipeId) >= 1;
 	}
 
@@ -327,7 +327,11 @@ public final class MechanicsWorkbenchScreenHandler extends ScreenHandler {
 
 	private boolean autofillRecipe(PlayerEntity player, int recipeId, boolean fillMaximum) {
 		Page targetPage = pageForRecipe(recipeId);
-		if (targetPage == null || targetPage != this.page || targetPage == Page.ASSEMBLY) return false;
+		if (targetPage == null || targetPage != this.page) return false;
+
+		if (targetPage == Page.ASSEMBLY) {
+			return this.autofillAssembly(player, recipeId);
+		}
 
 		List<Item> ingredients = this.getAutofillIngredients(recipeId);
 		if (ingredients == null) return false;
@@ -353,6 +357,77 @@ public final class MechanicsWorkbenchScreenHandler extends ScreenHandler {
 			this.updateResult();
 		}
 		return true;
+	}
+
+	private boolean autofillAssembly(PlayerEntity player, int recipeId) {
+		if (recipeId != ASSEMBLY_HATCHBACK || !this.canCraftRecipe(player, recipeId)) {
+			return false;
+		}
+
+		this.changingIngredients = true;
+		try {
+			if (!this.ensureAssemblyComponent(
+					player,
+					0,
+					List.of(ModItems.HATCHBACK_BODY)
+			)) return false;
+
+			if (!this.ensureAssemblyComponent(
+					player,
+					1,
+					List.of(ModItems.MANUAL_TRANSMISSION, ModItems.AUTOMATIC_TRANSMISSION)
+			)) return false;
+
+			if (!this.ensureAssemblyComponent(
+					player,
+					2,
+					List.of(ModItems.SUMMER_TIRE_SET, ModItems.ALL_SEASON_TIRE_SET, ModItems.WINTER_TIRE_SET)
+			)) return false;
+		} finally {
+			this.changingIngredients = false;
+			this.updateResult();
+		}
+
+		return true;
+	}
+
+	private boolean ensureAssemblyComponent(PlayerEntity player, int slot, List<Item> allowedItems) {
+		ItemStack existing = this.assemblyGrid.getStack(slot);
+		for (Item allowed : allowedItems) {
+			if (existing.isOf(allowed)) {
+				// Preserve a compatible component the player already chose.
+				return true;
+			}
+		}
+
+		if (!existing.isEmpty()) {
+			ItemStack returned = this.assemblyGrid.removeStack(slot);
+			if (!player.getInventory().insertStack(returned) && !returned.isEmpty()) {
+				player.dropItem(returned, false);
+			}
+		}
+
+		ItemStack pulled = this.takeFirstMatching(player, allowedItems);
+		if (pulled.isEmpty()) return false;
+		this.assemblyGrid.setStack(slot, pulled);
+		return true;
+	}
+
+	private ItemStack takeFirstMatching(PlayerEntity player, List<Item> allowedItems) {
+		for (int i = 0; i < player.getInventory().size(); i++) {
+			ItemStack stack = player.getInventory().getStack(i);
+			if (stack.isEmpty()) continue;
+
+			for (Item allowed : allowedItems) {
+				if (stack.isOf(allowed)) {
+					ItemStack pulled = stack.copyWithCount(1);
+					stack.decrement(1);
+					player.getInventory().markDirty();
+					return pulled;
+				}
+			}
+		}
+		return ItemStack.EMPTY;
 	}
 
 	private int getMaximumAutofillCrafts(PlayerEntity player, int recipeId) {
@@ -738,7 +813,7 @@ public final class MechanicsWorkbenchScreenHandler extends ScreenHandler {
 		ItemStack stack = slot.getStack();
 		ItemStack original = stack.copy();
 
-		if (slotIndex == OUTPUT_SLOT) {
+		if (slotIndex == BODY_PARTS_OUTPUT_SLOT || slotIndex == ASSEMBLY_OUTPUT_SLOT) {
 			if (!this.insertItem(stack, PLAYER_START, PLAYER_END, true)) return ItemStack.EMPTY;
 			slot.onQuickTransfer(stack, original);
 		} else if (slotIndex >= PLAYER_START) {
@@ -786,6 +861,38 @@ public final class MechanicsWorkbenchScreenHandler extends ScreenHandler {
 			this.dropInventory(player, this.bodyGrid);
 			this.dropInventory(player, this.partsGrid);
 			this.dropInventory(player, this.assemblyGrid);
+		}
+	}
+
+	private final class ResultSlot extends Slot {
+		private final boolean assemblyOnly;
+
+		private ResultSlot(Inventory inventory, int index, int x, int y, boolean assemblyOnly) {
+			super(inventory, index, x, y);
+			this.assemblyOnly = assemblyOnly;
+		}
+
+		@Override
+		public boolean isEnabled() {
+			return this.assemblyOnly
+					? MechanicsWorkbenchScreenHandler.this.page == Page.ASSEMBLY
+					: MechanicsWorkbenchScreenHandler.this.page != Page.ASSEMBLY;
+		}
+
+		@Override
+		public boolean canInsert(ItemStack stack) {
+			return false;
+		}
+
+		@Override
+		public boolean canTakeItems(PlayerEntity player) {
+			return this.isEnabled();
+		}
+
+		@Override
+		public void onTakeItem(PlayerEntity player, ItemStack stack) {
+			super.onTakeItem(player, stack);
+			MechanicsWorkbenchScreenHandler.this.craftCurrentRecipe(player);
 		}
 	}
 
